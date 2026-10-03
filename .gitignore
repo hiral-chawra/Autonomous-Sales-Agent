@@ -6,6 +6,10 @@ npm-debug.log*
 # Dependency directories
 node_modules/
 jspm_packages/
+venv/
+.venv/
+__pycache__/
+*.py[cod]
 
 # Local env files
 .env
