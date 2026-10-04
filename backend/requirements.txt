@@ -1,0 +1,12 @@
+fastapi==0.115.0
+uvicorn==0.30.6
+requests==2.32.3
+python-dotenv==1.0.1
+pydantic==2.8.2
+motor==3.5.1
+razorpay==1.4.1
+langchain-core==0.2.43
+langchain==0.2.14
+langchain-openai==0.1.25
+langgraph==0.1.19
+pipecat-ai[whisper,google,edge_tts,websocket]==0.0.46
