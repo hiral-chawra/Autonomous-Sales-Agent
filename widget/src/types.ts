@@ -21,12 +21,23 @@ export interface Message {
   toolPayload?: ToolPayload;
 }
 
-export type ToolPayloadType = 'calendar';
+export type ToolPayloadType = 'calendar' | 'mcq' | 'call_routing' | 'payment_tier';
 
 export interface ToolPayload {
   type: ToolPayloadType;
-  data?: Record<string, unknown>;
+  data?: Record<string, unknown> & {
+    options?: string[];
+    title?: string;
+    tiers?: Array<{ id: 'enquiry' | 'project'; name: string; amount: number }>;
+  };
 }
+
+declare global {
+  interface Window {
+    Razorpay: any;
+  }
+}
+
 
 export interface LeadData {
   full_name?: string;

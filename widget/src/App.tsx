@@ -1,10 +1,8 @@
 import React, { useState, useCallback, useRef } from 'react';
-import type { UIMode, Message, LeadData, WidgetConfig } from './types';
+import type { UIMode, Message, WidgetConfig } from './types';
 import ChatLauncher from './components/ChatLauncher';
 import ChatWindow from './components/ChatWindow';
-import CallPromptModal from './components/CallPromptModal';
 import CallAIWidget from './components/CallAIWidget';
-import ContactFormInterceptor from './components/ContactFormInterceptor';
 import { useSessionStorage } from './hooks/useSessionStorage';
 import { useWebSocket } from './hooks/useWebSocket';
 
@@ -13,12 +11,11 @@ interface AppProps {
 }
 
 export default function App({ config }: AppProps) {
-  const { sessionId, leadId, setLeadId } = useSessionStorage();
+  const { sessionId, leadId } = useSessionStorage();
 
   // ── UI state ──────────────────────────────────────────────────
   const [uiMode, setUiMode] = useState<UIMode>('idle');
   const [unreadCount, setUnreadCount] = useState(0);
-  const [capturedLead, setCapturedLead] = useState<LeadData | null>(null);
 
   // ── Messages ──────────────────────────────────────────────────
   const [messages, setMessages] = useState<Message[]>([
@@ -26,7 +23,7 @@ export default function App({ config }: AppProps) {
       id: 'welcome-1',
       role: 'assistant',
       content:
-        "👋 Hi! I'm **Aanandi**, your AI Sales Engineer. I can help you automate workflows, book demos, and answer any product questions.\n\nHow can I help you today?",
+        "👋 Hi! I'm **Aanandi**, your AI Sales Engineer. I can help answer product questions, verify your details, and guide you through booking a discussion with our team.\n\nHow can I help you today?",
       status: 'delivered',
       timestamp: new Date(),
     },
@@ -63,32 +60,6 @@ export default function App({ config }: AppProps) {
     setUiMode('chat');
   }, []);
 
-  const openModal = useCallback(() => {
-    setUiMode('modal');
-  }, []);
-
-  const handleFormCapture = useCallback(
-    async (lead: LeadData) => {
-      setCapturedLead(lead);
-      // POST lead to backend
-      try {
-        const res = await fetch(`${config.apiBase}/api/v1/lead/intercept`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...lead, session_id: sessionId }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.lead_id) setLeadId(data.lead_id);
-        }
-      } catch {
-        // silently fail — don't disrupt user
-      }
-      setUiMode('modal');
-    },
-    [config.apiBase, sessionId, setLeadId],
-  );
-
   const handleSendMessage = useCallback(
     async (text: string) => {
       if (!text.trim()) return;
@@ -102,7 +73,6 @@ export default function App({ config }: AppProps) {
       };
       setMessages((prev) => [...prev, userMsg]);
 
-      // Optimistic: set to delivered after WS send
       try {
         await wsSend(text.trim());
         setMessages((prev) =>
@@ -121,20 +91,9 @@ export default function App({ config }: AppProps) {
     [wsSend],
   );
 
-  const handleModalYes = useCallback(() => {
-    setUiMode('voice');
-  }, []);
-
-  const handleModalNo = useCallback(() => {
-    setUiMode('chat');
-  }, []);
-
   // ── Render ────────────────────────────────────────────────────
   return (
     <>
-      {/* Always-mounted form interceptor (no visual output) */}
-      <ContactFormInterceptor onCapture={handleFormCapture} />
-
       {/* Floating crystal launcher */}
       <ChatLauncher
         uiMode={uiMode}
@@ -157,16 +116,7 @@ export default function App({ config }: AppProps) {
         />
       )}
 
-      {/* Pre-call opt-in modal */}
-      {uiMode === 'modal' && (
-        <CallPromptModal
-          leadName={capturedLead?.full_name}
-          onYes={handleModalYes}
-          onNo={handleModalNo}
-        />
-      )}
-
-      {/* Voice call widget */}
+      {/* Voice call widget — unmounts on end and restores ChatWindow */}
       {uiMode === 'voice' && (
         <CallAIWidget
           sessionId={sessionId}
