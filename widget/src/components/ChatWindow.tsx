@@ -255,6 +255,8 @@ export default function ChatWindow({
                 sessionId={sessionId}
                 leadId={leadId}
                 apiBase={apiBase}
+                onSendMessage={onSendMessage}
+                onOpenVoice={onOpenVoice}
               />
             </div>
 

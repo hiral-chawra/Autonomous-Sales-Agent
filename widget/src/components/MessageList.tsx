@@ -8,9 +8,18 @@ interface MessageListProps {
   sessionId: string;
   leadId: string | null;
   apiBase: string;
+  onSendMessage?: (text: string) => Promise<void>;
+  onOpenVoice?: () => void;
 }
 
-export default function MessageList({ messages, sessionId, leadId, apiBase }: MessageListProps) {
+export default function MessageList({
+  messages,
+  sessionId,
+  leadId,
+  apiBase,
+  onSendMessage,
+  onOpenVoice,
+}: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -66,6 +75,8 @@ export default function MessageList({ messages, sessionId, leadId, apiBase }: Me
           leadId={leadId}
           apiBase={apiBase}
           isLatest={i === visibleMessages.length - 1}
+          onSendMessage={onSendMessage}
+          onOpenVoice={onOpenVoice}
         />
       ))}
 
@@ -124,9 +135,19 @@ interface BubbleProps {
   leadId: string | null;
   apiBase: string;
   isLatest: boolean;
+  onSendMessage?: (text: string) => Promise<void>;
+  onOpenVoice?: () => void;
 }
 
-function MessageBubble({ msg, sessionId, leadId, apiBase, isLatest }: BubbleProps) {
+function MessageBubble({
+  msg,
+  sessionId,
+  leadId,
+  apiBase,
+  isLatest,
+  onSendMessage,
+  onOpenVoice,
+}: BubbleProps) {
   const isUser = msg.role === 'user';
   const isSystem = msg.role === 'system';
 
@@ -197,6 +218,8 @@ function MessageBubble({ msg, sessionId, leadId, apiBase, isLatest }: BubbleProp
                     sessionId={sessionId}
                     leadId={leadId}
                     apiBase={apiBase}
+                    onSendMessage={onSendMessage}
+                    onOpenVoice={onOpenVoice}
                   />
                 </div>
               )}

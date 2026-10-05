@@ -8,6 +8,7 @@ node_modules/
 jspm_packages/
 venv/
 .venv/
+.venv311/
 __pycache__/
 *.py[cod]
 

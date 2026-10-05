@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Message, WSStatus } from '../types';
+import type { Message, ToolPayloadType, WSStatus } from '../types';
 
 interface UseWebSocketOptions {
   apiBase: string;
@@ -152,7 +152,7 @@ export function useWebSocket({
               status: 'delivered',
               timestamp: new Date(),
               toolPayload: {
-                type: payload.tool_type as 'calendar' | 'escrow',
+                type: payload.tool_type as ToolPayloadType,
                 data: payload.data as Record<string, unknown>,
               },
             };
