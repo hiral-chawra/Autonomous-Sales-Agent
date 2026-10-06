@@ -381,7 +381,40 @@ function RazorpayCheckoutCard({
         // Fallback for dev mode if server endpoint not yet initialized
       }
 
-      // 2. Load Razorpay JS SDK dynamically
+      // 2. Handle Demo Mode Fallback
+      if (keyId === 'rzp_test_dummy' || orderId.startsWith('order_demo')) {
+        setTimeout(async () => {
+          setState('verifying');
+          try {
+            await fetch(`${apiBase}/verify-payment`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                order_id: orderId,
+                payment_id: `pay_demo_${Date.now()}`,
+                signature: 'sig_demo',
+                session_id: sessionId,
+                lead_id: leadId,
+                tier: tier,
+              }),
+            });
+          } catch {
+            // Graceful fallback
+          }
+
+          setState('success');
+          if (onSendMessage) {
+            await onSendMessage(
+              `Payment of ₹${amount} for ${
+                tier === 'enquiry' ? 'Enquiry' : 'Project Discussion'
+              } confirmed.`
+            );
+          }
+        }, 1200);
+        return;
+      }
+
+      // 3. Load Razorpay JS SDK dynamically for real keys
       const loaded = await loadRazorpayScript();
       if (!loaded) {
         throw new Error('Failed to load Razorpay SDK. Please check your internet connection.');
@@ -389,7 +422,7 @@ function RazorpayCheckoutCard({
 
       setState('checkout');
 
-      // 3. Launch Razorpay modal
+      // 4. Launch Razorpay modal
       const options = {
         key: keyId,
         amount: amount * 100, // paise
@@ -399,11 +432,11 @@ function RazorpayCheckoutCard({
           tier === 'enquiry'
             ? 'General Enquiry Booking (₹100)'
             : 'Technical Project Discussion (₹500)',
-        order_id: orderId.startsWith('order_demo') ? undefined : orderId,
+        order_id: orderId,
         handler: async function (response: any) {
           setState('verifying');
           try {
-            const verifyRes = await fetch(`${apiBase}/verify-payment`, {
+            await fetch(`${apiBase}/verify-payment`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -415,10 +448,6 @@ function RazorpayCheckoutCard({
                 tier: tier,
               }),
             });
-
-            if (!verifyRes.ok) {
-              // Graceful handling
-            }
           } catch {
             // Graceful fallback
           }
@@ -455,43 +484,25 @@ function RazorpayCheckoutCard({
 
   if (state === 'success') {
     return (
-      <CardShell title="Booking & Payment Confirmed!" icon={<CheckCircle size={14} color="#22C55E" />}>
-        <div style={{ textAlign: 'center', padding: '12px 4px' }}>
-          <div style={{ fontSize: '36px', marginBottom: '8px' }}>🎉</div>
-          <div style={{ fontSize: '14px', fontWeight: 700, color: '#ffffff', marginBottom: '6px' }}>
-            Calendar Invite Dispatched!
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+        <CardShell title="Payment Verified!" icon={<CheckCircle size={14} color="#22C55E" />}>
+          <div style={{ textAlign: 'center', padding: '8px 4px' }}>
+            <div style={{ fontSize: '28px', marginBottom: '4px' }}>🎉</div>
+            <div style={{ fontSize: '14px', fontWeight: 700, color: '#ffffff', marginBottom: '4px' }}>
+              Payment of ₹{selectedTier === 'enquiry' ? '100' : '500'} Confirmed!
+            </div>
+            <p style={{ fontSize: '12px', color: '#DBD7FA', margin: 0 }}>
+              Now pick your preferred date & time slot below to finalize your booking and receive your email calendar invite.
+            </p>
           </div>
-          <p style={{ fontSize: '12px', color: '#DBD7FA', lineHeight: '1.5', marginBottom: '12px' }}>
-            Your payment for{' '}
-            <strong style={{ color: '#FAD800' }}>
-              {selectedTier === 'enquiry' ? 'Enquiry Tier (₹100)' : 'Project Discussion (₹500)'}
-            </strong>{' '}
-            was successfully processed.
-          </p>
-          <div
-            style={{
-              background: 'rgba(34,197,94,0.12)',
-              border: '1px solid rgba(34,197,94,0.3)',
-              borderRadius: '10px',
-              padding: '10px',
-              fontSize: '12px',
-              color: '#4ADE80',
-              textAlign: 'left',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-            }}
-          >
-            <UserCheck size={16} color="#4ADE80" />
-            <span>
-              Assigned Team:{' '}
-              <strong>
-                {selectedTier === 'enquiry' ? 'Receptionist Team' : 'Technical Leads Team'}
-              </strong>
-            </span>
-          </div>
-        </div>
-      </CardShell>
+        </CardShell>
+        <CalendarCard
+          sessionId={sessionId}
+          leadId={leadId}
+          apiBase={apiBase}
+          tier={selectedTier || 'enquiry'}
+        />
+      </div>
     );
   }
 
@@ -651,10 +662,12 @@ function CalendarCard({
   sessionId,
   leadId,
   apiBase,
+  tier = 'enquiry',
 }: {
   sessionId: string;
   leadId: string | null;
   apiBase: string;
+  tier?: string;
 }) {
   const [state, setState] = useState<CalendarState>('loading');
   const [slots, setSlots] = useState<TimeSlot[]>([]);
@@ -686,11 +699,12 @@ function CalendarCard({
     if (!selectedSlot) return;
     setState('confirming');
     try {
-      const payload: BookingPayload = {
+      const payload = {
         slot_start: selectedSlot.start,
         slot_end: selectedSlot.end,
         lead_id: leadId ?? 'anonymous',
         session_id: sessionId,
+        tier: tier,
       };
       const res = await fetch(`${apiBase}/api/v1/scheduling/book`, {
         method: 'POST',

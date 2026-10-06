@@ -1,33 +1,81 @@
 import os
 import requests
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 
 load_dotenv()
 
 def send_email_dispatch(to_email: str, subject: str, text_content: str) -> dict:
-    """Sends an email using the Resend API."""
-    api_key = os.getenv("RESEND_API_KEY")
-    
-    if not api_key:
-        print(f"Mock Email sent to {to_email}: {subject}")
-        return {"success": True, "message": "Mock email sent (No API key)."}
+    """
+    Sends an email using SMTP (e.g. Gmail App Password) or Resend API.
+    Falls back to mock mode with clear logging if no credentials are configured.
+    """
+    # Reload .env on dispatch call to capture dynamically updated credentials
+    load_dotenv(override=True)
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    
-    payload = {
-        "from": "Aanandi Bot <onboarding@resend.dev>",
-        "to": [to_email],
-        "subject": subject,
-        "text": text_content
+    # 1. Try Standard SMTP (e.g. Gmail SMTP)
+    smtp_user = os.getenv("SMTP_USER") or os.getenv("SMTP_EMAIL")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+
+    if smtp_user and smtp_password:
+        smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        from_email = os.getenv("SMTP_FROM_EMAIL", smtp_user)
+        try:
+            msg = MIMEMultipart()
+            msg["From"] = f"Aanandi Sales <{from_email}>"
+            msg["To"] = to_email
+            msg["Subject"] = subject
+            msg.attach(MIMEText(text_content, "plain"))
+
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_password)
+                server.send_message(msg)
+            print(f"[SMTP EMAIL SENT] Real email sent to: {to_email} | Subject: {subject}")
+            return {"success": True, "provider": "smtp", "mock": False}
+        except Exception as e:
+            print(f"[SMTP ERROR] Failed to send email via SMTP to {to_email}: {e}. Attempting Resend API fallback...")
+
+    # 2. Try Resend API (Fallback or primary if no SMTP)
+    resend_api_key = os.getenv("RESEND_API_KEY")
+    if resend_api_key:
+        headers = {
+            "Authorization": f"Bearer {resend_api_key}",
+            "Content-Type": "application/json"
+        }
+        from_addr = os.getenv("RESEND_FROM_EMAIL", "Aanandi Bot <onboarding@resend.dev>")
+        payload = {
+            "from": from_addr,
+            "to": [to_email],
+            "subject": subject,
+            "text": text_content
+        }
+        try:
+            response = requests.post("https://api.resend.com/emails", json=payload, headers=headers)
+            if response.status_code in [200, 201]:
+                print(f"[RESEND EMAIL SENT] Real email sent via Resend API to: {to_email}")
+                return {"success": True, "provider": "resend", "mock": False}
+            else:
+                err_text = response.text
+                print(f"[RESEND API ERROR]: {err_text}")
+                return {"success": False, "error": f"Resend API Error: {err_text}", "mock": False}
+        except Exception as e:
+            print(f"[RESEND ERROR]: {str(e)}")
+            return {"success": False, "error": str(e), "mock": False}
+
+    # 3. Fallback: Mock Mode (No API key / SMTP credentials found)
+    print(f"\n--- [MOCK EMAIL DISPATCH] ---")
+    print(f"   To: {to_email}")
+    print(f"   Subject: {subject}")
+    print(f"   Content:\n   {text_content.replace(chr(10), chr(10) + '   ')}\n")
+    print("   [NOTE] No SMTP credentials (SMTP_USER/SMTP_PASSWORD/SMTP_EMAIL) or RESEND_API_KEY found in .env.")
+    print("   Emails are currently being simulated (logged to console).\n")
+    return {
+        "success": True,
+        "mock": True,
+        "message": "Mock email logged to server console (No API/SMTP key configured)."
     }
 
-    try:
-        response = requests.post("https://api.resend.com/emails", json=payload, headers=headers)
-        if response.status_code in [200, 201]:
-            return {"success": True}
-        return {"success": False, "error": response.text}
-    except Exception as e:
-        return {"success": False, "error": str(e)}

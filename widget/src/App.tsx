@@ -132,9 +132,6 @@ export default function App({ config }: AppProps) {
   // ── Render ────────────────────────────────────────────────────
   return (
     <>
-      {/* Always-mounted form interceptor (no visual output) */}
-      <ContactFormInterceptor onCapture={handleFormCapture} />
-
       {/* Floating crystal launcher */}
       <ChatLauncher
         uiMode={uiMode}

@@ -11,7 +11,31 @@ from pipecat.services.whisper.stt import WhisperSTTService
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.processors.aggregators.llm_context import LLMContext
 
+from pipecat.serializers.base_serializer import FrameSerializer
+from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame
+
 load_dotenv()
+
+class RawPCMFrameSerializer(FrameSerializer):
+    def __init__(self, sample_rate: int = 16000, num_channels: int = 1):
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.num_channels = num_channels
+
+    async def serialize(self, frame: Frame) -> str | bytes | None:
+        if isinstance(frame, OutputAudioRawFrame):
+            return frame.audio
+        return None
+
+    async def deserialize(self, data: str | bytes) -> Frame | None:
+        if isinstance(data, bytes):
+            return InputAudioRawFrame(
+                audio=data,
+                sample_rate=self.sample_rate,
+                num_channels=self.num_channels
+            )
+        return None
+
 
 async def book_meeting(function_name, tool_call_id, args, llm, context, result_callback):
     """Triggers the Cal.com API v2 to book an appointment."""
@@ -42,10 +66,29 @@ async def book_meeting(function_name, tool_call_id, args, llm, context, result_c
     except Exception as e:
         await result_callback({"status": "error", "message": str(e)})
 
+# Pre-initialize STT model to make connection handling instant
+stt = WhisperSTTService(model="tiny")
+
 async def run_voice_agent(transport):
-    stt = WhisperSTTService(model="base")
-    tts = GoogleTTSService(api_key=os.getenv("GEMINI_API_KEY", ""), voice_id="en-IN-Wavenet-A")
-    llm = GoogleLLMService(api_key=os.getenv("GEMINI_API_KEY", ""), model="gemini-1.5-flash")
+    elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
+    if elevenlabs_key:
+        from pipecat.services.elevenlabs.tts import ElevenLabsTTSService, ElevenLabsTTSSettings
+        tts = ElevenLabsTTSService(
+            api_key=elevenlabs_key,
+            settings=ElevenLabsTTSSettings(voice="21m00Tcm4TlvDq8ikWAM")
+        )
+    else:
+        from pipecat.services.google.tts import GoogleTTSService, GoogleTTSSettings
+        tts = GoogleTTSService(
+            api_key=os.getenv("GEMINI_API_KEY", ""),
+            settings=GoogleTTSSettings(voice="en-IN-Wavenet-A")
+        )
+
+    from pipecat.services.google.llm import GoogleLLMService, GoogleLLMSettings
+    llm = GoogleLLMService(
+        api_key=os.getenv("GEMINI_API_KEY", ""),
+        settings=GoogleLLMSettings(model="gemini-1.5-flash")
+    )
 
     llm.register_function("book_meeting", book_meeting)
 
@@ -70,6 +113,6 @@ async def run_voice_agent(transport):
         context_aggregator.assistant()
     ])
 
-    task = PipelineTask(pipeline, PipelineParams())
+    task = PipelineTask(pipeline, params=PipelineParams())
     runner = PipelineRunner()
     await runner.run(task)
