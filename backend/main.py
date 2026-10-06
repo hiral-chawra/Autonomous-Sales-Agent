@@ -46,23 +46,69 @@ async def create_order(order: OrderRequest):
         return {"order_id": razorpay_order["id"], "amount": order_data["amount"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+import random
+from pydantic import EmailStr
+from dispatch import send_email_dispatch
+
+class OTPRequest(BaseModel):
+    email: EmailStr
+
+@app.post("/api/v1/auth/send-otp")
+async def send_otp(req: OTPRequest):
+    """Generates and emails an OTP for frontend verification."""
+    otp_code = str(random.randint(100000, 999999))
+    
+    # In production, you would save `otp_code` to your database with an expiration timestamp
+    # to verify it later. For now, we dispatch the email.
+    
+    email_body = f"Your Aanandi security code is {otp_code}. It is valid for 10 minutes."
+    result = send_email_dispatch(req.email, "Your Aanandi Security Code", email_body)
+    
+    if result.get("success"):
+        # Return the OTP to the frontend strictly for testing purposes during prototype phase
+        return {"status": "success", "message": "OTP dispatched", "test_otp": otp_code}
+    raise HTTPException(status_code=500, detail="Failed to dispatch OTP email")
+class VerifyPaymentRequest(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+    meeting_url: str = "Link pending generation"
+    ics_link: str = "ICS pending generation"
 
 @app.post("/verify-payment")
-async def verify_payment(request: Request):
-    """Mandatory Razorpay payment signature verification endpoint."""
-    data = await request.json()
+async def verify_payment(data: VerifyPaymentRequest):
     try:
+        # 1. Cryptographically verify the payment signature
         razorpay_client.utility.verify_payment_signature({
-            'razorpay_order_id': data.get('razorpay_order_id'),
-            'razorpay_payment_id': data.get('razorpay_payment_id'),
-            'razorpay_signature': data.get('razorpay_signature')
-        })
-        return {"status": "success", "message": "Payment verified securely"}
+    'razorpay_order_id': data.razorpay_order_id,
+    'razorpay_payment_id': data.razorpay_payment_id,
+    'razorpay_signature': data.razorpay_signature
+})
+        # 2. Securely fetch the order from Razorpay to check the amount
+        order = razorpay_client.order.fetch(data.razorpay_order_id)
+        amount_in_rupees = order['amount'] / 100
+
+        # 3. Internal Team Routing
+        subject = "New Booking via Voice Agent"
+        body = (
+            f"A new payment of ₹{amount_in_rupees} was successfully verified.\n\n"
+            f"Order ID: {data.razorpay_order_id}\n"
+            f"Payment ID: {data.razorpay_payment_id}\n"
+            f"Google Meet Link: {data.meeting_url}\n"
+            f"Calendar ICS: {data.ics_link}"
+        )
+
+        if amount_in_rupees == 100:
+            send_email_dispatch("reception@aanandi.in", f"Enquiry: {subject}", body)
+        elif amount_in_rupees == 500:
+            send_email_dispatch("tech-leads@aanandi.in", f"Project: {subject}", body)
+
+        return {"status": "success", "message": "Payment verified and internal teams notified."}
+        
     except razorpay.errors.SignatureVerificationError:
         raise HTTPException(status_code=400, detail="Invalid payment signature")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 # ── 1. Form Interceptor Endpoint ──────────────────────────────────────
 class LeadInterceptPayload(BaseModel):
     full_name: str | None = None
