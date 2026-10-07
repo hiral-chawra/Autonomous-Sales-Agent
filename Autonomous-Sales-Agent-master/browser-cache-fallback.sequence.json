@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Browser -> API -> Redis Cache -> PostgreSQL Fallback Sequence",
+    "output": "browser-cache-fallback-sequence.html",
+    "viewBox": [960, 600],
+    "column_fit": "spread",
+    "animation": "trace",
+    "quality_profile": "showcase"
+  },
+  "participants": [
+    { "id": "browser", "type": "frontend", "label": "Browser", "sublabel": "Client UI" },
+    { "id": "api", "type": "backend", "label": "API Server", "sublabel": "FastAPI / Node" },
+    { "id": "redis", "type": "database", "label": "Redis", "sublabel": "In-Memory Cache" },
+    { "id": "postgres", "type": "database", "label": "PostgreSQL", "sublabel": "Persistent DB" }
+  ],
+  "segments": [
+    { "from": 150, "to": 240, "label": "1. Request & Cache Check" },
+    { "from": 250, "to": 360, "label": "2. Cache Miss & DB Fallback" },
+    { "from": 370, "to": 470, "label": "3. Cache Backfill & Response" }
+  ],
+  "messages": [
+    { "id": "http-req", "from": "browser", "to": "api", "y": 165, "label": "GET /data/:id", "variant": "emphasis" },
+    { "id": "get-cache", "from": "api", "to": "redis", "y": 195, "label": "GET key (cache lookup)", "variant": "default" },
+    { "id": "cache-miss", "from": "redis", "to": "api", "y": 225, "label": "nil (cache miss)", "variant": "return" },
+    { "id": "sql-fallback", "from": "api", "to": "postgres", "y": 270, "label": "SELECT * FROM data WHERE id = :id", "variant": "emphasis" },
+    { "id": "sql-res", "from": "postgres", "to": "api", "y": 315, "label": "Return row records", "variant": "return" },
+    { "id": "set-cache", "from": "api", "to": "redis", "y": 385, "label": "SETEX key 3600 (backfill cache)", "variant": "dashed" },
+    { "id": "http-res", "from": "api", "to": "browser", "y": 430, "label": "200 OK (JSON Payload)", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "browser", "from": 160, "to": 440, "type": "frontend" },
+    { "participant": "api", "from": 165, "to": 435, "type": "backend" },
+    { "participant": "redis", "from": 190, "to": 230, "type": "database" },
+    { "participant": "postgres", "from": 265, "to": 320, "type": "database" },
+    { "participant": "redis", "from": 380, "to": 400, "type": "database" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Client Ingress",
+      "items": [
+        "Browser initiates data request over HTTP to the API service",
+        "API orchestrates the lookup order and fallbacks"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Redis Cache Check",
+      "items": [
+        "API checks in-memory key in Redis first for fast response",
+        "If present (cache hit), API returns instantly without touching DB"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "PostgreSQL Fallback & Write-Back",
+      "items": [
+        "On cache miss, query executes against PostgreSQL database",
+        "Data is cached into Redis and sent to client"
+      ]
+    }
+  ]
+}

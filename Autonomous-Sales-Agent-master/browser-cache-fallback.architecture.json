@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Browser -> API -> Redis Cache -> PostgreSQL Fallback",
+    "output": "browser-cache-fallback.html",
+    "quality_profile": "showcase"
+  },
+  "components": [
+    {
+      "id": "browser",
+      "type": "frontend",
+      "label": "Browser Client",
+      "sublabel": "User / Web UI",
+      "pos": [60, 240],
+      "size": [140, 64],
+      "tag": "Client Request"
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "API Service",
+      "sublabel": "FastAPI / Node.js :8000",
+      "pos": [300, 240],
+      "size": [160, 64],
+      "tag": "Cache-Aside Orchestrator"
+    },
+    {
+      "id": "redis",
+      "type": "database",
+      "label": "Redis Cache",
+      "sublabel": "In-Memory Store :6379",
+      "pos": [560, 140],
+      "size": [160, 64],
+      "tag": "Hit (~1ms)"
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL DB",
+      "sublabel": "Relational Storage :5432",
+      "pos": [560, 340],
+      "size": [160, 64],
+      "tag": "Fallback / Source of Truth"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Backend Infrastructure",
+      "wraps": ["api", "redis", "postgres"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "req-browser-api",
+      "from": "browser",
+      "to": "api",
+      "label": "HTTP Request",
+      "variant": "emphasis"
+    },
+    {
+      "id": "cache-lookup",
+      "from": "api",
+      "to": "redis",
+      "label": "1. Cache Lookup",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "db-fallback",
+      "from": "api",
+      "to": "postgres",
+      "label": "2. Fallback on Miss",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "left"
+    },
+    {
+      "id": "populate-cache",
+      "from": "postgres",
+      "to": "redis",
+      "label": "3. Backfill Cache",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Client Request",
+      "items": [
+        "Browser initiates HTTP GET/POST request to the API backend",
+        "API orchestrates the caching and fallback workflow"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Cache First (Fast Path)",
+      "items": [
+        "API queries Redis cache first for sub-millisecond data retrieval",
+        "On cache HIT, response is immediately returned to browser"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "PostgreSQL Fallback (Miss Path)",
+      "items": [
+        "On cache MISS, query falls back to PostgreSQL primary database",
+        "PostgreSQL query result is cached into Redis and sent to client"
+      ]
+    }
+  ]
+}

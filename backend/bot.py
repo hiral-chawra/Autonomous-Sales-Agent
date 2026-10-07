@@ -1,3 +1,6 @@
+import io
+import av
+import edge_tts
 import os
 import requests
 from dotenv import load_dotenv
@@ -5,9 +8,8 @@ from dotenv import load_dotenv
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.services.google.llm import GoogleLLMService
-from pipecat.services.google.tts import GoogleTTSService
 from pipecat.services.whisper.stt import WhisperSTTService
+from pipecat.services.tts_service import TTSService
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.processors.aggregators.llm_context import LLMContext
 
@@ -35,6 +37,53 @@ class RawPCMFrameSerializer(FrameSerializer):
                 num_channels=self.num_channels
             )
         return None
+
+
+class EdgeTTSService(TTSService):
+    """High-quality streaming Neural TTS service using EdgeTTS and PyAV for 16kHz PCM audio."""
+    def __init__(self, voice: str = "en-IN-NeerjaNeural", sample_rate: int = 16000, **kwargs):
+        super().__init__(sample_rate=sample_rate, **kwargs)
+        self._voice = voice
+
+    async def run_tts(self, text: str):
+        try:
+            communicate = edge_tts.Communicate(text, self._voice)
+            mp3_bytes = b""
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    mp3_bytes += chunk["data"]
+
+            if not mp3_bytes:
+                return
+
+            container = av.open(io.BytesIO(mp3_bytes))
+            resampler = av.AudioResampler(format="s16", layout="mono", rate=self.sample_rate)
+
+            # Yield PCM16 frames in 1600-byte (50ms) chunks for real-time audio playback
+            chunk_size = 1600
+            buffer = bytearray()
+
+            for frame in container.decode(audio=0):
+                resampled_frames = resampler.resample(frame)
+                for rf in resampled_frames:
+                    buffer.extend(bytes(rf.planes[0]))
+                    while len(buffer) >= chunk_size:
+                        raw_chunk = bytes(buffer[:chunk_size])
+                        del buffer[:chunk_size]
+                        yield OutputAudioRawFrame(
+                            audio=raw_chunk,
+                            sample_rate=self.sample_rate,
+                            num_channels=1
+                        )
+
+            if len(buffer) > 0:
+                yield OutputAudioRawFrame(
+                    audio=bytes(buffer),
+                    sample_rate=self.sample_rate,
+                    num_channels=1
+                )
+        except Exception as e:
+            print(f"[EdgeTTS] Error rendering voice: {e}")
 
 
 async def book_meeting(function_name, tool_call_id, args, llm, context, result_callback):
@@ -70,27 +119,35 @@ async def book_meeting(function_name, tool_call_id, args, llm, context, result_c
 stt = WhisperSTTService(model="tiny")
 
 async def run_voice_agent(transport):
-    elevenlabs_key = os.getenv("ELEVENLABS_API_KEY")
-    if elevenlabs_key:
-        from pipecat.services.elevenlabs.tts import ElevenLabsTTSService, ElevenLabsTTSSettings
-        tts = ElevenLabsTTSService(
-            api_key=elevenlabs_key,
-            settings=ElevenLabsTTSSettings(voice="21m00Tcm4TlvDq8ikWAM")
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+
+    # 1. Initialize LLM with automatic working key selection
+    if openrouter_key and openrouter_key.startswith("sk-or"):
+        from pipecat.services.openai.llm import OpenAILLMService
+        llm = OpenAILLMService(
+            api_key=openrouter_key,
+            base_url="https://openrouter.ai/api/v1",
+            settings=OpenAILLMService.Settings(model="openai/gpt-4o-mini")
+        )
+    elif gemini_key and gemini_key.startswith("AIzaSy"):
+        from pipecat.services.google.llm import GoogleLLMService, GoogleLLMSettings
+        llm = GoogleLLMService(
+            api_key=gemini_key,
+            settings=GoogleLLMSettings(model="gemini-1.5-flash")
         )
     else:
-        from pipecat.services.google.tts import GoogleTTSService, GoogleTTSSettings
-        tts = GoogleTTSService(
-            api_key=os.getenv("GEMINI_API_KEY", ""),
-            settings=GoogleTTSSettings(voice="en-IN-Wavenet-A")
+        from pipecat.services.openai.llm import OpenAILLMService
+        llm = OpenAILLMService(
+            api_key=openrouter_key,
+            base_url="https://openrouter.ai/api/v1",
+            settings=OpenAILLMService.Settings(model="openai/gpt-4o-mini")
         )
 
-    from pipecat.services.google.llm import GoogleLLMService, GoogleLLMSettings
-    llm = GoogleLLMService(
-        api_key=os.getenv("GEMINI_API_KEY", ""),
-        settings=GoogleLLMSettings(model="gemini-1.5-flash")
-    )
-
     llm.register_function("book_meeting", book_meeting)
+
+    # 2. Resilient Neural Voice Synthesis (EdgeTTS)
+    tts = EdgeTTSService(voice="en-IN-NeerjaNeural", sample_rate=16000)
 
     context = LLMContext(
         messages=[{
@@ -115,4 +172,4 @@ async def run_voice_agent(transport):
 
     task = PipelineTask(pipeline, params=PipelineParams())
     runner = PipelineRunner()
-    await runner.run(task)
+    await runner.run(task)
