@@ -229,6 +229,31 @@ def reasoning_node(state: AgentState):
     user_phone = state.get("user_phone", "")
     otp_code = state.get("otp_code", "")
 
+    # ── 0. Payment Confirmation Success & Follow-ups (Top Priority) ──────────────
+    if "payment" in last_msg.lower() and "confirmed" in last_msg.lower():
+        # Extract the date and time from the incoming message (everything after " on ")
+        date_time_str = last_msg.split(" on ")[-1].strip(" .") if " on " in last_msg else "your scheduled time"
+        
+        return {
+            "messages": [
+                AIMessage(content=f"🎉 **Your booking is fully confirmed for {date_time_str}!** We have dispatched the calendar invite to your inbox and notified our team.\n\nWhile you wait for our meeting, would you like to explore anything else?")
+            ],
+            "lead_stage": "CALL_BOOKED",
+            "pending_step": "VERIFIED",
+            "tool_payload": {
+                "type": "mcq",
+                "data": {
+                    "title": "Suggested Follow-ups",
+                    "options": [
+                        "Which projects have you made so far?",
+                        "Tell me about Custom CRM Integrations",
+                        "How do AI Voice Bots work?",
+                        "Talk to AI (Live Voice Demo)"
+                    ]
+                }
+            }
+        }
+
     # ── 1. Check for Call / Booking Request (Overriding Priority) ──────────────
     if any(k in last_msg.lower() for k in ["book", "call", "talk", "demo", "pricing", "tier", "schedule"]):
         return {
