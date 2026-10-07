@@ -14,6 +14,12 @@ import {
   Sparkles,
   UserCheck,
   Code2,
+  RefreshCw,
+  Edit3,
+  Mail,
+  User,
+  Phone,
+  ArrowRight,
 } from 'lucide-react';
 import type { ToolPayload, TimeSlot, BookingPayload, EscrowPayload } from '../types';
 
@@ -34,6 +40,26 @@ export default function ActionCards({
   onSendMessage,
   onOpenVoice,
 }: ActionCardsProps) {
+  if (payload.type === 'lead_form') {
+    return (
+      <LeadFormCard
+        payload={payload}
+        sessionId={sessionId}
+        apiBase={apiBase}
+        onSendMessage={onSendMessage}
+      />
+    );
+  }
+
+  if (payload.type === 'otp_options') {
+    return (
+      <OtpOptionsCard
+        payload={payload}
+        onSendMessage={onSendMessage}
+      />
+    );
+  }
+
   if (payload.type === 'mcq') {
     return (
       <MCQCard
@@ -73,9 +99,11 @@ export default function ActionCards({
         sessionId={sessionId}
         leadId={leadId}
         apiBase={apiBase}
+        onSendMessage={onSendMessage}
       />
     );
   }
+
   if (payload.type === 'escrow') {
     return (
       <EscrowCard
@@ -85,11 +113,385 @@ export default function ActionCards({
       />
     );
   }
+
   return null;
 }
 
 /* ══════════════════════════════════════════════════════════════════════
-   1. MCQ CARD (Clickable Bubble Options)
+   1. LEAD FORM CARD (Interactive HTML Input Boxes inside Chat Bubble)
+══════════════════════════════════════════════════════════════════════ */
+function LeadFormCard({
+  payload,
+  sessionId,
+  apiBase,
+  onSendMessage,
+}: {
+  payload: ToolPayload;
+  sessionId: string;
+  apiBase: string;
+  onSendMessage?: (text: string) => Promise<void>;
+}) {
+  const fields = payload.data?.fields || ['name', 'email', 'phone'];
+  const title = payload.data?.title || 'Quick Verification Details';
+
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const [submitted, setSubmitted] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+
+    // Field validations
+    if (fields.includes('name') && !name.trim()) {
+      setErrorMsg('Please enter your full name');
+      return;
+    }
+    if (fields.includes('email') && (!email.trim() || !email.includes('@') || !email.includes('.'))) {
+      setErrorMsg('Please enter a valid email address');
+      return;
+    }
+    if (fields.includes('phone') && !phone.trim()) {
+      setErrorMsg('Please enter your phone number');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      // 1. Send data to Lead Interceptor API
+      await fetch(`${apiBase}/api/v1/lead/intercept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          full_name: name.trim() || undefined,
+          email: email.trim() || undefined,
+          phone: phone.trim() || undefined,
+        }),
+      });
+
+      setSubmitted(true);
+
+      // 2. Dispatch combined message to websocket stream
+      if (onSendMessage) {
+        let textMsg = '';
+        if (fields.length === 1 && fields[0] === 'email') {
+          textMsg = email.trim();
+        } else if (fields.length === 1 && fields[0] === 'phone') {
+          textMsg = phone.trim();
+        } else if (fields.length === 1 && fields[0] === 'name') {
+          textMsg = name.trim();
+        } else {
+          textMsg = `My details - Name: ${name.trim()}, Email: ${email.trim()}, Phone: ${phone.trim()}`;
+        }
+        await onSendMessage(textMsg);
+      }
+    } catch {
+      setErrorMsg('Submission failed. Please try again.');
+      setIsSubmitting(false);
+    }
+  };
+
+  if (submitted) {
+    return (
+      <CardShell title="Details Submitted" icon={<CheckCircle size={14} color="#22C55E" />}>
+        <div style={{ textAlign: 'center', padding: '6px 0', color: '#22C55E', fontSize: '12px', fontWeight: 600 }}>
+          ✓ Information updated! Processing verification…
+        </div>
+      </CardShell>
+    );
+  }
+
+  return (
+    <CardShell title={title} icon={<UserCheck size={14} color="#9591F4" />}>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        {/* Name input */}
+        {fields.includes('name') && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <label style={{ fontSize: '11px', fontWeight: 600, color: '#DBD7FA', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <User size={12} color="#9591F4" /> Full Name
+            </label>
+            <input
+              type="text"
+              placeholder="e.g. Rahul Sharma"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              disabled={isSubmitting}
+              style={{
+                width: '100%',
+                padding: '9px 12px',
+                borderRadius: '10px',
+                background: 'rgba(10,24,56,0.8)',
+                border: '1px solid rgba(149,145,244,0.3)',
+                color: '#ffffff',
+                fontSize: '13px',
+                outline: 'none',
+              }}
+            />
+          </div>
+        )}
+
+        {/* Email input */}
+        {fields.includes('email') && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <label style={{ fontSize: '11px', fontWeight: 600, color: '#DBD7FA', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Mail size={12} color="#9591F4" /> Email Address
+            </label>
+            <input
+              type="email"
+              placeholder="e.g. rahul@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={isSubmitting}
+              style={{
+                width: '100%',
+                padding: '9px 12px',
+                borderRadius: '10px',
+                background: 'rgba(10,24,56,0.8)',
+                border: '1px solid rgba(149,145,244,0.3)',
+                color: '#ffffff',
+                fontSize: '13px',
+                outline: 'none',
+              }}
+            />
+          </div>
+        )}
+
+        {/* Phone input */}
+        {fields.includes('phone') && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <label style={{ fontSize: '11px', fontWeight: 600, color: '#DBD7FA', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <Phone size={12} color="#9591F4" /> Phone Number
+            </label>
+            <input
+              type="tel"
+              placeholder="e.g. +91 9876543210"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              disabled={isSubmitting}
+              style={{
+                width: '100%',
+                padding: '9px 12px',
+                borderRadius: '10px',
+                background: 'rgba(10,24,56,0.8)',
+                border: '1px solid rgba(149,145,244,0.3)',
+                color: '#ffffff',
+                fontSize: '13px',
+                outline: 'none',
+              }}
+            />
+          </div>
+        )}
+
+        {errorMsg && (
+          <div style={{ fontSize: '11px', color: '#EF4444', textAlign: 'center', marginTop: '2px' }}>
+            {errorMsg}
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          style={{
+            marginTop: '4px',
+            width: '100%',
+            padding: '10px',
+            borderRadius: '10px',
+            background: 'linear-gradient(135deg, #5A5BBD, #9591F4)',
+            border: 'none',
+            color: '#ffffff',
+            fontWeight: 700,
+            fontSize: '13px',
+            cursor: isSubmitting ? 'default' : 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '6px',
+            boxShadow: '0 4px 14px rgba(90,91,189,0.35)',
+            transition: 'all 0.2s ease',
+          }}
+        >
+          {isSubmitting ? (
+            <>
+              <div
+                style={{
+                  width: '14px',
+                  height: '14px',
+                  border: '2px solid rgba(255,255,255,0.3)',
+                  borderTopColor: '#ffffff',
+                  borderRadius: '50%',
+                }}
+                className="animate-spin"
+              />
+              Submitting…
+            </>
+          ) : (
+            <>
+              Verify & Continue <ArrowRight size={14} />
+            </>
+          )}
+        </button>
+      </form>
+    </CardShell>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   2. OTP OPTIONS CARD (Escape Hatch for Resend / Change Email)
+══════════════════════════════════════════════════════════════════════ */
+function OtpOptionsCard({
+  payload,
+  onSendMessage,
+}: {
+  payload: ToolPayload;
+  onSendMessage?: (text: string) => Promise<void>;
+}) {
+  const [otpCode, setOtpCode] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const targetEmail = (payload.data?.user_email as string) || 'your email';
+
+  const handleVerify = async () => {
+    const code = otpCode.replace(/\D/g, '').trim();
+    if (code.length !== 6 || isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      if (onSendMessage) {
+        await onSendMessage(code);
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleResend = async () => {
+    if (onSendMessage) {
+      await onSendMessage('resend code');
+    }
+  };
+
+  const handleChangeEmail = async () => {
+    if (onSendMessage) {
+      await onSendMessage('change email');
+    }
+  };
+
+  return (
+    <CardShell title="6-Digit Verification Code" icon={<Shield size={14} color="#FAD800" />}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <p style={{ fontSize: '11px', color: '#DBD7FA', margin: 0, lineHeight: '1.4' }}>
+          Code sent to: <strong style={{ color: '#ffffff' }}>{targetEmail}</strong>
+        </p>
+
+        {/* Input box for 6-digit OTP */}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <input
+            type="text"
+            maxLength={6}
+            placeholder="123456"
+            value={otpCode}
+            onChange={(e) => setOtpCode(e.target.value)}
+            style={{
+              flex: 1,
+              padding: '9px 12px',
+              borderRadius: '10px',
+              background: 'rgba(10,24,56,0.8)',
+              border: '1px solid rgba(149,145,244,0.3)',
+              color: '#FAD800',
+              fontSize: '15px',
+              fontWeight: 700,
+              letterSpacing: '3px',
+              textAlign: 'center',
+              outline: 'none',
+            }}
+          />
+          <button
+            onClick={handleVerify}
+            disabled={otpCode.length !== 6 || isSubmitting}
+            style={{
+              padding: '9px 14px',
+              borderRadius: '10px',
+              background:
+                otpCode.length === 6
+                  ? 'linear-gradient(135deg, #5A5BBD, #9591F4)'
+                  : 'rgba(149,145,244,0.15)',
+              border: 'none',
+              color: otpCode.length === 6 ? '#ffffff' : 'rgba(255,255,255,0.4)',
+              fontWeight: 700,
+              fontSize: '12px',
+              cursor: otpCode.length === 6 ? 'pointer' : 'default',
+            }}
+          >
+            Verify
+          </button>
+        </div>
+
+        {/* Escape Hatch Buttons */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '4px' }}>
+          <button
+            onClick={handleResend}
+            style={{
+              padding: '8px 10px',
+              borderRadius: '9px',
+              background: 'rgba(149,145,244,0.1)',
+              border: '1px solid rgba(149,145,244,0.25)',
+              color: '#DBD7FA',
+              fontSize: '11px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = 'rgba(149,145,244,0.2)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = 'rgba(149,145,244,0.1)';
+            }}
+          >
+            <RefreshCw size={12} color="#9591F4" /> Resend Code
+          </button>
+
+          <button
+            onClick={handleChangeEmail}
+            style={{
+              padding: '8px 10px',
+              borderRadius: '9px',
+              background: 'rgba(250,216,0,0.08)',
+              border: '1px solid rgba(250,216,0,0.25)',
+              color: '#FAD800',
+              fontSize: '11px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px',
+              transition: 'all 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = 'rgba(250,216,0,0.15)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = 'rgba(250,216,0,0.08)';
+            }}
+          >
+            <Edit3 size={12} color="#FAD800" /> Change Email
+          </button>
+        </div>
+      </div>
+    </CardShell>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   3. MCQ CARD (Clickable Options)
 ══════════════════════════════════════════════════════════════════════ */
 function MCQCard({
   payload,
@@ -104,10 +506,10 @@ function MCQCard({
     payload.data?.options && Array.isArray(payload.data.options) && payload.data.options.length > 0
       ? payload.data.options
       : [
-          'Automate Sales Pipeline',
-          'Custom CRM Integration',
-          'AI Voice Bot Setup',
-          'Explore Pricing & Tiers',
+          'Which projects have you made so far?',
+          'Tell me about Custom CRM Integrations',
+          'How do AI Voice Bots work?',
+          'Talk to AI or Book Call',
         ];
 
   const title = payload.data?.title || 'Suggested Options';
@@ -152,22 +554,6 @@ function MCQCard({
                 boxShadow: isThisSelected ? '0 4px 14px rgba(90,91,189,0.4)' : 'none',
                 opacity: selected && !isThisSelected ? 0.4 : 1,
               }}
-              onMouseEnter={(e) => {
-                if (!selected) {
-                  (e.currentTarget as HTMLButtonElement).style.background =
-                    'rgba(149,145,244,0.2)';
-                  (e.currentTarget as HTMLButtonElement).style.borderColor =
-                    'rgba(149,145,244,0.5)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (!selected) {
-                  (e.currentTarget as HTMLButtonElement).style.background =
-                    'rgba(149,145,244,0.1)';
-                  (e.currentTarget as HTMLButtonElement).style.borderColor =
-                    'rgba(149,145,244,0.25)';
-                }
-              }}
             >
               <span>{optionText}</span>
               {isThisSelected && <CheckCircle size={14} color="#ffffff" />}
@@ -180,7 +566,7 @@ function MCQCard({
 }
 
 /* ══════════════════════════════════════════════════════════════════════
-   2. CALL ROUTING CARD ("Talk to AI" vs "Book Human Call")
+   4. CALL ROUTING CARD ("Talk to AI" vs "Book Human Expert")
 ══════════════════════════════════════════════════════════════════════ */
 function CallRoutingCard({
   sessionId,
@@ -196,16 +582,160 @@ function CallRoutingCard({
   onOpenVoice?: () => void;
   onSendMessage?: (text: string) => Promise<void>;
 }) {
-  const [showCheckout, setShowCheckout] = useState(false);
+  const [step, setStep] = useState<'routing' | 'tier_select' | 'calendar' | 'checkout'>('routing');
+  const [selectedTier, setSelectedTier] = useState<'enquiry' | 'project'>('enquiry');
+  const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
 
-  if (showCheckout) {
+  if (step === 'checkout' && selectedSlot) {
     return (
       <RazorpayCheckoutCard
         sessionId={sessionId}
         leadId={leadId}
         apiBase={apiBase}
+        tier={selectedTier}
+        slot={selectedSlot}
         onSendMessage={onSendMessage}
       />
+    );
+  }
+
+  if (step === 'calendar') {
+    return (
+      <CalendarCard
+        sessionId={sessionId}
+        leadId={leadId}
+        apiBase={apiBase}
+        tier={selectedTier}
+        onSendMessage={onSendMessage}
+        onSlotConfirmed={(slot) => {
+          setSelectedSlot(slot);
+          setStep('checkout');
+        }}
+      />
+    );
+  }
+
+  if (step === 'tier_select') {
+    return (
+      <CardShell title="Select Meeting Tier" icon={<CreditCard size={14} color="#9591F4" />}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {/* Tier 1: ₹100 Enquiry */}
+          <button
+            onClick={() => {
+              setSelectedTier('enquiry');
+              setStep('calendar');
+            }}
+            style={{
+              width: '100%',
+              padding: '12px',
+              borderRadius: '12px',
+              background: 'rgba(149,145,244,0.1)',
+              border: '1px solid rgba(149,145,244,0.3)',
+              color: '#ffffff',
+              cursor: 'pointer',
+              textAlign: 'left',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '8px',
+                  background: 'rgba(149,145,244,0.2)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <UserCheck size={16} color="#9591F4" />
+              </div>
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
+                  General Enquiry Call
+                </div>
+                <div style={{ fontSize: '11px', color: '#DBD7FA' }}>
+                  Routed to Receptionist Team
+                </div>
+              </div>
+            </div>
+            <div
+              style={{
+                padding: '6px 10px',
+                borderRadius: '8px',
+                background: '#5A5BBD',
+                color: 'white',
+                fontSize: '12px',
+                fontWeight: 800,
+              }}
+            >
+              ₹100
+            </div>
+          </button>
+
+          {/* Tier 2: ₹500 Project Discussion */}
+          <button
+            onClick={() => {
+              setSelectedTier('project');
+              setStep('calendar');
+            }}
+            style={{
+              width: '100%',
+              padding: '12px',
+              borderRadius: '12px',
+              background: 'linear-gradient(135deg, rgba(250,216,0,0.15), rgba(250,216,0,0.05))',
+              border: '1px solid rgba(250,216,0,0.4)',
+              color: '#ffffff',
+              cursor: 'pointer',
+              textAlign: 'left',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '8px',
+                  background: 'rgba(250,216,0,0.2)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Code2 size={16} color="#FAD800" />
+              </div>
+              <div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
+                  Technical Project Discussion
+                </div>
+                <div style={{ fontSize: '11px', color: '#DBD7FA' }}>
+                  Routed to Senior Tech Leads
+                </div>
+              </div>
+            </div>
+            <div
+              style={{
+                padding: '6px 10px',
+                borderRadius: '8px',
+                background: 'linear-gradient(135deg, #FAD800, #E8C500)',
+                color: '#00183D',
+                fontSize: '12px',
+                fontWeight: 800,
+              }}
+            >
+              ₹500
+            </div>
+          </button>
+        </div>
+      </CardShell>
     );
   }
 
@@ -229,14 +759,6 @@ function CallRoutingCard({
             transition: 'all 0.2s ease',
             boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
           }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-1px)';
-            (e.currentTarget as HTMLButtonElement).style.borderColor = '#9591F4';
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.transform = 'none';
-            (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(149,145,244,0.4)';
-          }}
         >
           <div
             style={{
@@ -254,7 +776,7 @@ function CallRoutingCard({
           </div>
           <div style={{ textAlign: 'left', flex: 1 }}>
             <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
-              Talk to AI Voice Agent
+              Live AI Voice Call (Free)
             </div>
             <div style={{ fontSize: '11px', color: '#DBD7FA', marginTop: '2px' }}>
               Instant voice interaction · No waiting time
@@ -264,7 +786,7 @@ function CallRoutingCard({
 
         {/* Option B: Book Human Call */}
         <button
-          onClick={() => setShowCheckout(true)}
+          onClick={() => setStep('tier_select')}
           style={{
             width: '100%',
             padding: '12px 14px',
@@ -278,12 +800,6 @@ function CallRoutingCard({
             gap: '12px',
             transition: 'all 0.2s ease',
             boxShadow: '0 4px 16px rgba(250,216,0,0.25)',
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.transform = 'translateY(-1px)';
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.transform = 'none';
           }}
         >
           <div
@@ -302,10 +818,10 @@ function CallRoutingCard({
           </div>
           <div style={{ textAlign: 'left', flex: 1 }}>
             <div style={{ fontSize: '13px', fontWeight: 800, color: '#00183D' }}>
-              Book Human Expert Call
+              Book Human Expert Call (Paid)
             </div>
             <div style={{ fontSize: '11px', color: '#00255C', fontWeight: 600, marginTop: '2px' }}>
-              Select Enquiry (₹100) or Project (₹500)
+              Select Date/Time first · ₹100 or ₹500 QR
             </div>
           </div>
         </button>
@@ -315,366 +831,32 @@ function CallRoutingCard({
 }
 
 /* ══════════════════════════════════════════════════════════════════════
-   3. RAZORPAY CHECKOUT CARD (Tier Selection + JS SDK Modal + Verification)
+   5. CALENDAR CARD (Slot Picker - Pick Slot BEFORE Payment)
 ══════════════════════════════════════════════════════════════════════ */
-type CheckoutState = 'idle' | 'creating' | 'checkout' | 'verifying' | 'success' | 'error';
-
-function loadRazorpayScript(): Promise<boolean> {
-  return new Promise((resolve) => {
-    if (window.Razorpay) {
-      resolve(true);
-      return;
-    }
-    const script = document.createElement('script');
-    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-    script.onload = () => resolve(true);
-    script.onerror = () => resolve(false);
-    document.body.appendChild(script);
-  });
-}
-
-function RazorpayCheckoutCard({
-  sessionId,
-  leadId,
-  apiBase,
-  onSendMessage,
-}: {
-  sessionId: string;
-  leadId: string | null;
-  apiBase: string;
-  onSendMessage?: (text: string) => Promise<void>;
-}) {
-  const [state, setState] = useState<CheckoutState>('idle');
-  const [errorMsg, setErrorMsg] = useState<string>('');
-  const [selectedTier, setSelectedTier] = useState<'enquiry' | 'project' | null>(null);
-
-  const handleCheckout = async (tier: 'enquiry' | 'project', amount: number) => {
-    setSelectedTier(tier);
-    setState('creating');
-    setErrorMsg('');
-
-    try {
-      // 1. Create order on backend
-      let orderId = `order_demo_${Date.now()}`;
-      let keyId = 'rzp_test_dummy';
-      let currency = 'INR';
-
-      try {
-        const res = await fetch(`${apiBase}/create-order`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tier,
-            amount,
-            session_id: sessionId,
-            lead_id: leadId,
-          }),
-        });
-
-        if (res.ok) {
-          const data = await res.json();
-          orderId = data.order_id || orderId;
-          keyId = data.key_id || keyId;
-          currency = data.currency || currency;
-        }
-      } catch {
-        // Fallback for dev mode if server endpoint not yet initialized
-      }
-
-      // 2. Handle Demo Mode Fallback
-      if (keyId === 'rzp_test_dummy' || orderId.startsWith('order_demo')) {
-        setTimeout(async () => {
-          setState('verifying');
-          try {
-            await fetch(`${apiBase}/verify-payment`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                order_id: orderId,
-                payment_id: `pay_demo_${Date.now()}`,
-                signature: 'sig_demo',
-                session_id: sessionId,
-                lead_id: leadId,
-                tier: tier,
-              }),
-            });
-          } catch {
-            // Graceful fallback
-          }
-
-          setState('success');
-          if (onSendMessage) {
-            await onSendMessage(
-              `Payment of ₹${amount} for ${
-                tier === 'enquiry' ? 'Enquiry' : 'Project Discussion'
-              } confirmed.`
-            );
-          }
-        }, 1200);
-        return;
-      }
-
-      // 3. Load Razorpay JS SDK dynamically for real keys
-      const loaded = await loadRazorpayScript();
-      if (!loaded) {
-        throw new Error('Failed to load Razorpay SDK. Please check your internet connection.');
-      }
-
-      setState('checkout');
-
-      // 4. Launch Razorpay modal
-      const options = {
-        key: keyId,
-        amount: amount * 100, // paise
-        currency: currency,
-        name: 'Aanandi Sales',
-        description:
-          tier === 'enquiry'
-            ? 'General Enquiry Booking (₹100)'
-            : 'Technical Project Discussion (₹500)',
-        order_id: orderId,
-        handler: async function (response: any) {
-          setState('verifying');
-          try {
-            await fetch(`${apiBase}/verify-payment`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                order_id: response.razorpay_order_id || orderId,
-                payment_id: response.razorpay_payment_id || `pay_${Date.now()}`,
-                signature: response.razorpay_signature || 'sig_demo',
-                session_id: sessionId,
-                lead_id: leadId,
-                tier: tier,
-              }),
-            });
-          } catch {
-            // Graceful fallback
-          }
-
-          setState('success');
-          if (onSendMessage) {
-            await onSendMessage(
-              `Payment of ₹${amount} for ${
-                tier === 'enquiry' ? 'Enquiry' : 'Project Discussion'
-              } confirmed.`
-            );
-          }
-        },
-        modal: {
-          ondismiss: function () {
-            setState('idle');
-          },
-        },
-        prefill: {
-          name: 'Valued Client',
-        },
-        theme: {
-          color: '#5A5BBD',
-        },
-      };
-
-      const rzp = new window.Razorpay(options);
-      rzp.open();
-    } catch (err: unknown) {
-      setErrorMsg(err instanceof Error ? err.message : 'Checkout failed');
-      setState('error');
-    }
-  };
-
-  if (state === 'success') {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-        <CardShell title="Payment Verified!" icon={<CheckCircle size={14} color="#22C55E" />}>
-          <div style={{ textAlign: 'center', padding: '8px 4px' }}>
-            <div style={{ fontSize: '28px', marginBottom: '4px' }}>🎉</div>
-            <div style={{ fontSize: '14px', fontWeight: 700, color: '#ffffff', marginBottom: '4px' }}>
-              Payment of ₹{selectedTier === 'enquiry' ? '100' : '500'} Confirmed!
-            </div>
-            <p style={{ fontSize: '12px', color: '#DBD7FA', margin: 0 }}>
-              Now pick your preferred date & time slot below to finalize your booking and receive your email calendar invite.
-            </p>
-          </div>
-        </CardShell>
-        <CalendarCard
-          sessionId={sessionId}
-          leadId={leadId}
-          apiBase={apiBase}
-          tier={selectedTier || 'enquiry'}
-        />
-      </div>
-    );
-  }
-
-  return (
-    <CardShell title="Select Call Tier & Pay via Razorpay" icon={<CreditCard size={14} color="#9591F4" />}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        {/* Tier 1: ₹100 Enquiry */}
-        <button
-          onClick={() => handleCheckout('enquiry', 100)}
-          disabled={state === 'creating' || state === 'checkout' || state === 'verifying'}
-          style={{
-            width: '100%',
-            padding: '12px',
-            borderRadius: '12px',
-            background: 'rgba(149,145,244,0.1)',
-            border: '1px solid rgba(149,145,244,0.3)',
-            color: '#ffffff',
-            cursor: 'pointer',
-            textAlign: 'left',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            transition: 'all 0.2s ease',
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = 'rgba(149,145,244,0.2)';
-            (e.currentTarget as HTMLButtonElement).style.borderColor = '#9591F4';
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.background = 'rgba(149,145,244,0.1)';
-            (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(149,145,244,0.3)';
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                background: 'rgba(149,145,244,0.2)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <UserCheck size={16} color="#9591F4" />
-            </div>
-            <div>
-              <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
-                For General Enquiry
-              </div>
-              <div style={{ fontSize: '11px', color: '#DBD7FA' }}>
-                Routed to Receptionist Team
-              </div>
-            </div>
-          </div>
-          <div
-            style={{
-              padding: '6px 10px',
-              borderRadius: '8px',
-              background: '#5A5BBD',
-              color: 'white',
-              fontSize: '12px',
-              fontWeight: 800,
-            }}
-          >
-            ₹100
-          </div>
-        </button>
-
-        {/* Tier 2: ₹500 Project Discussion */}
-        <button
-          onClick={() => handleCheckout('project', 500)}
-          disabled={state === 'creating' || state === 'checkout' || state === 'verifying'}
-          style={{
-            width: '100%',
-            padding: '12px',
-            borderRadius: '12px',
-            background: 'linear-gradient(135deg, rgba(250,216,0,0.15), rgba(250,216,0,0.05))',
-            border: '1px solid rgba(250,216,0,0.4)',
-            color: '#ffffff',
-            cursor: 'pointer',
-            textAlign: 'left',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            transition: 'all 0.2s ease',
-          }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.borderColor = '#FAD800';
-          }}
-          onMouseLeave={(e) => {
-            (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(250,216,0,0.4)';
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <div
-              style={{
-                width: '32px',
-                height: '32px',
-                borderRadius: '8px',
-                background: 'rgba(250,216,0,0.2)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Code2 size={16} color="#FAD800" />
-            </div>
-            <div>
-              <div style={{ fontSize: '13px', fontWeight: 700, color: '#ffffff' }}>
-                For Technical Project
-              </div>
-              <div style={{ fontSize: '11px', color: '#DBD7FA' }}>
-                Routed to Technical Leads
-              </div>
-            </div>
-          </div>
-          <div
-            style={{
-              padding: '6px 10px',
-              borderRadius: '8px',
-              background: 'linear-gradient(135deg, #FAD800, #E8C500)',
-              color: '#00183D',
-              fontSize: '12px',
-              fontWeight: 800,
-            }}
-          >
-            ₹500
-          </div>
-        </button>
-
-        {/* Loading / Status overlay */}
-        {(state === 'creating' || state === 'verifying') && (
-          <div style={{ textAlign: 'center', padding: '6px 0', fontSize: '12px', color: '#9591F4', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-            <div style={{ width: '14px', height: '14px', border: '2px solid rgba(149,145,244,0.3)', borderTopColor: '#9591F4', borderRadius: '50%' }} className="animate-spin" />
-            {state === 'creating' ? 'Preparing Razorpay Checkout…' : 'Verifying Payment & Booking…'}
-          </div>
-        )}
-
-        {state === 'error' && (
-          <div style={{ fontSize: '12px', color: '#EF4444', textAlign: 'center' }}>
-            {errorMsg}
-          </div>
-        )}
-      </div>
-    </CardShell>
-  );
-}
-
-/* ══════════════════════════════════════════════════════════════════════
-   4. CALENDAR CARD (Legacy / Backup)
-══════════════════════════════════════════════════════════════════════ */
-type CalendarState = 'loading' | 'picking' | 'confirming' | 'booked' | 'error';
+type CalendarState = 'loading' | 'picking' | 'error';
 
 function CalendarCard({
   sessionId,
   leadId,
   apiBase,
   tier = 'enquiry',
+  onSendMessage,
+  onSlotConfirmed,
 }: {
   sessionId: string;
   leadId: string | null;
   apiBase: string;
-  tier?: string;
+  tier?: 'enquiry' | 'project';
+  onSendMessage?: (text: string) => Promise<void>;
+  onSlotConfirmed?: (slot: TimeSlot) => void;
 }) {
   const [state, setState] = useState<CalendarState>('loading');
   const [slots, setSlots] = useState<TimeSlot[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
-  const [bookingUrl, setBookingUrl] = useState<string>('');
   const [weekOffset, setWeekOffset] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
+
+  const amount = tier === 'enquiry' ? 100 : 500;
 
   useEffect(() => {
     const load = async () => {
@@ -682,7 +864,7 @@ function CalendarCard({
         const res = await fetch(
           `${apiBase}/api/v1/scheduling/availability?session_id=${sessionId}&week_offset=${weekOffset}`
         );
-        if (!res.ok) throw new Error('Failed to fetch');
+        if (!res.ok) throw new Error('Failed to fetch slots');
         const data: { slots: TimeSlot[] } = await res.json();
         setSlots(data.slots.filter((s) => s.available));
         setState('picking');
@@ -695,35 +877,16 @@ function CalendarCard({
     load();
   }, [apiBase, sessionId, weekOffset]);
 
-  const handleBook = async () => {
+  const handleProceedToPayment = () => {
     if (!selectedSlot) return;
-    setState('confirming');
-    try {
-      const payload = {
-        slot_start: selectedSlot.start,
-        slot_end: selectedSlot.end,
-        lead_id: leadId ?? 'anonymous',
-        session_id: sessionId,
-        tier: tier,
-      };
-      const res = await fetch(`${apiBase}/api/v1/scheduling/book`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error('Booking failed');
-      const data = await res.json();
-      setBookingUrl(data.meeting_url ?? '#');
-      setState('booked');
-    } catch (e: unknown) {
-      setErrorMsg(e instanceof Error ? e.message : 'Unknown error');
-      setState('error');
+    if (onSlotConfirmed) {
+      onSlotConfirmed(selectedSlot);
     }
   };
 
   if (state === 'loading') {
     return (
-      <CardShell title="Schedule a Demo" icon={<Calendar size={14} />}>
+      <CardShell title="Select Meeting Date & Time" icon={<Calendar size={14} />}>
         <div style={{ display: 'flex', justifyContent: 'center', padding: '20px' }}>
           <div
             style={{
@@ -736,64 +899,6 @@ function CalendarCard({
             className="animate-spin"
           />
         </div>
-      </CardShell>
-    );
-  }
-
-  if (state === 'booked') {
-    return (
-      <CardShell title="Booking Confirmed!" icon={<CheckCircle size={14} color="#22C55E" />}>
-        <div style={{ textAlign: 'center', padding: '8px 0' }}>
-          <div style={{ fontSize: '32px', marginBottom: '8px' }}>🎉</div>
-          <p style={{ fontSize: '12px', color: '#DBD7FA', marginBottom: '10px', lineHeight: '1.5' }}>
-            Your demo is confirmed! Check your email for the calendar invite.
-          </p>
-          {bookingUrl && bookingUrl !== '#' && (
-            <a
-              href={bookingUrl}
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '5px',
-                padding: '7px 14px',
-                borderRadius: '8px',
-                background: 'linear-gradient(135deg, #5A5BBD, #9591F4)',
-                color: 'white',
-                fontSize: '12px',
-                fontWeight: 600,
-                textDecoration: 'none',
-              }}
-            >
-              View Meeting Link →
-            </a>
-          )}
-        </div>
-      </CardShell>
-    );
-  }
-
-  if (state === 'error') {
-    return (
-      <CardShell title="Schedule a Demo" icon={<AlertCircle size={14} color="#EF4444" />}>
-        <p style={{ fontSize: '12px', color: '#EF4444', textAlign: 'center' }}>{errorMsg}</p>
-        <button
-          onClick={() => setState('picking')}
-          style={{
-            marginTop: '8px',
-            width: '100%',
-            padding: '8px',
-            borderRadius: '8px',
-            background: 'rgba(149,145,244,0.15)',
-            border: '1px solid rgba(149,145,244,0.3)',
-            color: '#9591F4',
-            fontSize: '12px',
-            cursor: 'pointer',
-          }}
-        >
-          Try again
-        </button>
       </CardShell>
     );
   }
@@ -812,7 +917,7 @@ function CalendarCard({
   const dates = Object.keys(byDate);
 
   return (
-    <CardShell title="Schedule a Demo" icon={<Calendar size={14} />}>
+    <CardShell title={`Pick Slot (${tier.toUpperCase()} - ₹${amount})`} icon={<Calendar size={14} color="#9591F4" />}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
         <button
           onClick={() => setWeekOffset((w) => Math.max(0, w - 1))}
@@ -903,7 +1008,7 @@ function CalendarCard({
           <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '8px' }}>
             <Clock size={12} color="#9591F4" />
             <span style={{ fontSize: '11px', color: '#DBD7FA', fontWeight: 600 }}>
-              {new Date(selectedSlot.start).toLocaleString('en-IN', {
+              Selected: {new Date(selectedSlot.start).toLocaleString('en-IN', {
                 weekday: 'short',
                 month: 'short',
                 day: 'numeric',
@@ -914,44 +1019,24 @@ function CalendarCard({
             </span>
           </div>
           <button
-            onClick={handleBook}
-            disabled={state === 'confirming'}
+            onClick={handleProceedToPayment}
             style={{
               width: '100%',
-              padding: '9px',
+              padding: '10px',
               borderRadius: '10px',
-              background:
-                state === 'confirming'
-                  ? 'rgba(90,91,189,0.4)'
-                  : 'linear-gradient(135deg, #FAD800, #e8c500)',
+              background: 'linear-gradient(135deg, #FAD800, #e8c500)',
               color: '#00183D',
               border: 'none',
-              fontWeight: 700,
+              fontWeight: 800,
               fontSize: '13px',
-              cursor: state === 'confirming' ? 'default' : 'pointer',
+              cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: '6px',
             }}
           >
-            {state === 'confirming' ? (
-              <>
-                <div
-                  style={{
-                    width: '14px',
-                    height: '14px',
-                    border: '2px solid rgba(0,24,61,0.4)',
-                    borderTopColor: '#00183D',
-                    borderRadius: '50%',
-                  }}
-                  className="animate-spin"
-                />
-                Booking…
-              </>
-            ) : (
-              'Confirm Booking'
-            )}
+            Lock Slot & Pay ₹{amount} via Razorpay →
           </button>
         </div>
       )}
@@ -960,7 +1045,283 @@ function CalendarCard({
 }
 
 /* ══════════════════════════════════════════════════════════════════════
-   ESCROW / COMMITMENT STAKING CARD
+   6. RAZORPAY CHECKOUT CARD (QR / JS SDK Checkout AFTER Slot Selection)
+══════════════════════════════════════════════════════════════════════ */
+type CheckoutState = 'idle' | 'creating' | 'checkout' | 'verifying' | 'success' | 'error';
+
+function loadRazorpayScript(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (window.Razorpay) {
+      resolve(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
+
+function RazorpayCheckoutCard({
+  sessionId,
+  leadId,
+  apiBase,
+  tier = 'enquiry',
+  slot,
+  onSendMessage,
+}: {
+  sessionId: string;
+  leadId: string | null;
+  apiBase: string;
+  tier?: 'enquiry' | 'project';
+  slot?: TimeSlot;
+  onSendMessage?: (text: string) => Promise<void>;
+}) {
+  const [state, setState] = useState<CheckoutState>('idle');
+  const [errorMsg, setErrorMsg] = useState<string>('');
+  const [bookingDetails, setBookingDetails] = useState<{ meetingUrl?: string; timeFmt?: string } | null>(null);
+
+  const amount = tier === 'enquiry' ? 100 : 500;
+
+  const slotTimeStr = slot
+    ? new Date(slot.start).toLocaleString('en-IN', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true,
+      })
+    : 'Selected Slot';
+
+  const handleCheckout = async () => {
+    setState('creating');
+    setErrorMsg('');
+
+    try {
+      // 1. Create Razorpay order
+      let orderId = `order_demo_${Date.now()}`;
+      let keyId = 'rzp_test_dummy';
+      let currency = 'INR';
+
+      try {
+        const res = await fetch(`${apiBase}/create-order`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tier,
+            amount,
+            session_id: sessionId,
+            lead_id: leadId,
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          orderId = data.order_id || orderId;
+          keyId = data.key_id || keyId;
+          currency = data.currency || currency;
+        }
+      } catch {
+        // Fallback for dev mode
+      }
+
+      // Helper function to execute post-payment booking
+      const executeBooking = async (pId: string, sig: string) => {
+        setState('verifying');
+
+        // Verify Payment
+        await fetch(`${apiBase}/verify-payment`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            order_id: orderId,
+            payment_id: pId,
+            signature: sig,
+            session_id: sessionId,
+            lead_id: leadId,
+            tier: tier,
+          }),
+        });
+
+        // Call Cal.com / Booking endpoint to finalize meeting & send email calendar invite
+        if (slot) {
+          const bookRes = await fetch(`${apiBase}/api/v1/scheduling/book`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              slot_start: slot.start,
+              slot_end: slot.end,
+              lead_id: leadId || 'anonymous',
+              session_id: sessionId,
+              tier: tier,
+            }),
+          });
+          if (bookRes.ok) {
+            const bData = await bookRes.json();
+            setBookingDetails({
+              meetingUrl: bData.meeting_url,
+              timeFmt: bData.scheduled_time,
+            });
+          }
+        }
+
+        setState('success');
+
+        if (onSendMessage) {
+          await onSendMessage(
+            `Payment of ₹${amount} confirmed for ${tier === 'enquiry' ? 'Enquiry' : 'Project'} call on ${slotTimeStr}.`
+          );
+        }
+      };
+
+      // Demo mode handling
+      if (keyId === 'rzp_test_dummy' || orderId.startsWith('order_demo')) {
+        setTimeout(async () => {
+          await executeBooking(`pay_demo_${Date.now()}`, 'sig_demo');
+        }, 1200);
+        return;
+      }
+
+      // Real Razorpay SDK launch
+      const loaded = await loadRazorpayScript();
+      if (!loaded) throw new Error('Failed to load Razorpay SDK');
+
+      setState('checkout');
+
+      const options = {
+        key: keyId,
+        amount: amount * 100,
+        currency: currency,
+        name: 'Aanandi Sales',
+        description: `${tier === 'enquiry' ? 'Enquiry' : 'Project'} Call (${slotTimeStr})`,
+        order_id: orderId,
+        handler: async function (response: any) {
+          await executeBooking(
+            response.razorpay_payment_id || `pay_${Date.now()}`,
+            response.razorpay_signature || 'sig_demo'
+          );
+        },
+        modal: {
+          ondismiss: function () {
+            setState('idle');
+          },
+        },
+        theme: { color: '#5A5BBD' },
+      };
+
+      const rzp = new window.Razorpay(options);
+      rzp.open();
+    } catch (err: unknown) {
+      setErrorMsg(err instanceof Error ? err.message : 'Checkout failed');
+      setState('error');
+    }
+  };
+
+  if (state === 'success') {
+    return (
+      <CardShell title="Booking & Payment Confirmed!" icon={<CheckCircle size={14} color="#22C55E" />}>
+        <div style={{ textAlign: 'center', padding: '8px 4px' }}>
+          <div style={{ fontSize: '32px', marginBottom: '4px' }}>🎉</div>
+          <div style={{ fontSize: '14px', fontWeight: 800, color: '#ffffff', marginBottom: '4px' }}>
+            ₹{amount} Payment Verified & Meeting Booked!
+          </div>
+          <p style={{ fontSize: '12px', color: '#DBD7FA', margin: '0 0 10px 0', lineHeight: '1.5' }}>
+            📅 <strong>{bookingDetails?.timeFmt || slotTimeStr}</strong>
+            <br />
+            An email with your Google Meet calendar invite (`.ics`) has been dispatched to your inbox.
+          </p>
+          {bookingDetails?.meetingUrl && (
+            <a
+              href={bookingDetails.meetingUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 16px',
+                borderRadius: '10px',
+                background: 'linear-gradient(135deg, #5A5BBD, #9591F4)',
+                color: '#ffffff',
+                fontSize: '12px',
+                fontWeight: 700,
+                textDecoration: 'none',
+              }}
+            >
+              Join Google Meet →
+            </a>
+          )}
+        </div>
+      </CardShell>
+    );
+  }
+
+  return (
+    <CardShell title={`Pay ₹${amount} to Lock Slot`} icon={<CreditCard size={14} color="#FAD800" />}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+        <div style={{ background: 'rgba(149,145,244,0.1)', padding: '10px', borderRadius: '10px', border: '1px solid rgba(149,145,244,0.2)' }}>
+          <div style={{ fontSize: '11px', color: '#DBD7FA' }}>Selected Time Slot:</div>
+          <div style={{ fontSize: '13px', fontWeight: 700, color: '#FAD800', marginTop: '2px' }}>
+            🕒 {slotTimeStr}
+          </div>
+          <div style={{ fontSize: '11px', color: '#C0CAC7', marginTop: '4px' }}>
+            Tier: {tier === 'enquiry' ? 'General Enquiry (₹100)' : 'Technical Project (₹500)'}
+          </div>
+        </div>
+
+        <button
+          onClick={handleCheckout}
+          disabled={state === 'creating' || state === 'checkout' || state === 'verifying'}
+          style={{
+            width: '100%',
+            padding: '12px',
+            borderRadius: '12px',
+            background: 'linear-gradient(135deg, #FAD800, #E8C500)',
+            border: 'none',
+            color: '#00183D',
+            cursor: 'pointer',
+            fontWeight: 800,
+            fontSize: '14px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            boxShadow: '0 4px 16px rgba(250,216,0,0.3)',
+          }}
+        >
+          {state === 'creating' || state === 'verifying' ? (
+            <>
+              <div
+                style={{
+                  width: '16px',
+                  height: '16px',
+                  border: '2px solid rgba(0,24,61,0.3)',
+                  borderTopColor: '#00183D',
+                  borderRadius: '50%',
+                }}
+                className="animate-spin"
+              />
+              {state === 'creating' ? 'Launching Razorpay Checkout…' : 'Verifying & Booking Cal.com…'}
+            </>
+          ) : (
+            <>Pay ₹{amount} via Razorpay QR / Card</>
+          )}
+        </button>
+
+        {errorMsg && (
+          <div style={{ fontSize: '12px', color: '#EF4444', textAlign: 'center' }}>
+            {errorMsg}
+          </div>
+        )}
+      </div>
+    </CardShell>
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   7. ESCROW CARD
 ══════════════════════════════════════════════════════════════════════ */
 type EscrowMethod = 'stripe' | 'usdc';
 type EscrowState = 'picking' | 'processing' | 'done' | 'error';
@@ -1044,7 +1405,6 @@ function EscrowCard({
 
   return (
     <CardShell title="Commitment Stake" icon={<Shield size={14} color="#FAD800" />}>
-      {/* Method toggle */}
       <div className="toggle-group" style={{ marginBottom: '12px' }}>
         <button
           className={`toggle-btn${method === 'stripe' ? ' active' : ''}`}
@@ -1060,7 +1420,6 @@ function EscrowCard({
         </button>
       </div>
 
-      {/* Amount selector */}
       <div style={{ marginBottom: '10px' }}>
         <div style={{ fontSize: '10px', fontWeight: 700, color: '#9591F4', marginBottom: '6px', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
           Stake Amount
@@ -1078,7 +1437,6 @@ function EscrowCard({
         </div>
       </div>
 
-      {/* Disclosure */}
       <div
         style={{
           background: 'rgba(250,216,0,0.06)',
@@ -1093,7 +1451,6 @@ function EscrowCard({
           <p style={{ fontSize: '10px', color: 'rgba(250,216,0,0.85)', lineHeight: '1.6' }}>
             <strong>Attendance Commitment:</strong> Your ${amount} is fully refunded
             within 10 minutes of joining. No-shows forfeit the stake.
-            {method === 'usdc' && ' USDC held on Base/Polygon.'}
           </p>
         </div>
       </div>
@@ -1122,7 +1479,6 @@ function EscrowCard({
           alignItems: 'center',
           justifyContent: 'center',
           gap: '6px',
-          boxShadow: state !== 'processing' ? '0 4px 16px rgba(90,91,189,0.35)' : 'none',
         }}
       >
         {state === 'processing' ? (

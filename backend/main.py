@@ -295,6 +295,21 @@ async def chat_stream_endpoint(websocket: WebSocket, session_id: str):
 @app.websocket("/api/v1/voice/ws/{session_id}")
 async def voice_websocket_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
+
+    # Extract previous text chat history from LangGraph checkpointer / state for memory retention
+    formatted_history = []
+    try:
+        config = {"configurable": {"thread_id": session_id}}
+        current_state_obj = await sales_agent.aget_state(config)
+        if current_state_obj and current_state_obj.values:
+            raw_msgs = current_state_obj.values.get("messages", [])
+            for m in raw_msgs:
+                role = "user" if isinstance(m, HumanMessage) or getattr(m, "type", "") == "human" else "assistant"
+                if m.content and m.content.strip():
+                    formatted_history.append({"role": role, "content": m.content.strip()})
+    except Exception:
+        pass
+
     from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
     from bot import RawPCMFrameSerializer
     transport = FastAPIWebsocketTransport(
@@ -308,7 +323,7 @@ async def voice_websocket_endpoint(websocket: WebSocket, session_id: str):
             serializer=RawPCMFrameSerializer(sample_rate=16000, num_channels=1)
         )
     )
-    await run_voice_agent(transport)
+    await run_voice_agent(transport, chat_history=formatted_history)
 
 # ── 4. Calendar Scheduling Availability & Booking ─────────────────────
 @app.get("/api/v1/scheduling/availability")

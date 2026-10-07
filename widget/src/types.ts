@@ -26,13 +26,17 @@ export type ToolPayloadType =
   | 'escrow'
   | 'mcq'
   | 'call_routing'
-  | 'payment_tier';
+  | 'payment_tier'
+  | 'lead_form'
+  | 'otp_options';
 
 export interface ToolPayload {
   type: ToolPayloadType;
   data?: Record<string, unknown> & {
     options?: string[];
     title?: string;
+    fields?: string[];
+    user_email?: string;
     tiers?: Array<{ id: 'enquiry' | 'project'; name: string; amount: number }>;
   };
 }

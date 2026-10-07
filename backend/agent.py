@@ -252,36 +252,73 @@ def reasoning_node(state: AgentState):
             "tool_payload": None
         }
 
-    # ── 3. OTP Verification (if waiting for OTP code) ──────────────────────────
-    cleaned_digits = "".join(filter(str.isdigit, last_msg))
-    if pending_step == "VERIFY_OTP" and len(cleaned_digits) == 6 and not is_user_query(last_msg):
-        if cleaned_digits == otp_code:
+    # ── 3. OTP Escape Hatch & Verification ─────────────────────────────────────
+    if pending_step == "VERIFY_OTP":
+        target_mail = user_email.strip() if (user_email and "@" in user_email) else os.getenv("SMTP_EMAIL", "pyashkumar0312@gmail.com")
+        
+        # Check for escape hatch requests (Resend OTP or Change Email)
+        if any(k in last_msg.lower() for k in ["resend", "resend_otp", "resend code", "didn't receive", "didnt receive"]):
+            new_otp = str(random.randint(100000, 999999))
+            from dispatch import send_email_dispatch
+            send_email_dispatch(
+                to_email=target_mail,
+                subject="Your Aanandi Security Verification Code (Resent)",
+                text_content=f"Hello {user_name or 'Valued Customer'},\n\nYour new 6-digit security code is: {new_otp}\nValid for 10 minutes."
+            )
             return {
-                "messages": [AIMessage(content="✅ **Email Verified Successfully!**\n\nHow can I help you today with custom AI agents, workflow automation, or enterprise solutions?")],
-                "is_verified": True,
-                "pending_step": "VERIFIED",
+                "messages": [AIMessage(content=f"🔄 **New verification code sent!**\n\nPlease check your inbox (**{target_mail}**) and enter the 6-digit code below.")],
+                "user_email": target_mail,
+                "otp_code": new_otp,
+                "pending_step": "VERIFY_OTP",
                 "tool_payload": {
-                    "type": "mcq",
-                    "data": {
-                        "title": "Suggested Follow-ups",
-                        "options": [
-                            "Which projects have you made so far?",
-                            "Tell me about Custom CRM Integrations",
-                            "How do AI Voice Bots work?",
-                            "Talk to AI or Book Call"
-                        ]
-                    }
+                    "type": "otp_options",
+                    "data": {"user_email": target_mail, "can_resend": True, "can_change_email": True}
                 }
             }
-        else:
-            target_mail = user_email or "your email"
+
+        if any(k in last_msg.lower() for k in ["change email", "change_email", "wrong email", "different email"]):
             return {
-                "messages": [AIMessage(content=f"❌ Invalid verification code. Please check your inbox (**{target_mail}**) and enter the correct 6-digit code.")],
-                "pending_step": "VERIFY_OTP",
-                "tool_payload": None
+                "messages": [AIMessage(content="Sure! Please fill in your updated email address below to receive a new code:")],
+                "user_email": "",
+                "pending_step": "COLLECT_EMAIL",
+                "tool_payload": {
+                    "type": "lead_form",
+                    "data": {"title": "Update Email Address", "fields": ["email"]}
+                }
             }
 
+        cleaned_digits = "".join(filter(str.isdigit, last_msg))
+        if len(cleaned_digits) == 6 and not is_user_query(last_msg):
+            if cleaned_digits == otp_code:
+                return {
+                    "messages": [AIMessage(content="✅ **Email Verified Successfully!**\n\nHow can I help you today with custom AI agents, workflow automation, or enterprise solutions?")],
+                    "is_verified": True,
+                    "pending_step": "VERIFIED",
+                    "tool_payload": {
+                        "type": "mcq",
+                        "data": {
+                            "title": "Suggested Follow-ups",
+                            "options": [
+                                "Which projects have you made so far?",
+                                "Tell me about Custom CRM Integrations",
+                                "How do AI Voice Bots work?",
+                                "Talk to AI or Book Call"
+                            ]
+                        }
+                    }
+                }
+            else:
+                return {
+                    "messages": [AIMessage(content=f"❌ Invalid verification code. Please check your inbox (**{target_mail}**) and enter the correct 6-digit code.")],
+                    "pending_step": "VERIFY_OTP",
+                    "tool_payload": {
+                        "type": "otp_options",
+                        "data": {"user_email": target_mail, "can_resend": True, "can_change_email": True}
+                    }
+                }
+
     # ── 4. Phone Number Input Detection ────────────────────────────────────────
+    cleaned_digits = "".join(filter(str.isdigit, last_msg))
     if len(cleaned_digits) in [10, 11, 12] and not is_user_query(last_msg) and pending_step in ["COLLECT_PHONE", "COLLECT_EMAIL", "COLLECT_NAME"]:
         user_phone = last_msg.strip()
         target_email = user_email.strip() if (user_email and "@" in user_email) else os.getenv("SMTP_EMAIL", "pyashkumar0312@gmail.com")
@@ -312,7 +349,10 @@ def reasoning_node(state: AgentState):
             "user_email": target_email,
             "otp_code": new_otp,
             "pending_step": "VERIFY_OTP",
-            "tool_payload": None
+            "tool_payload": {
+                "type": "otp_options",
+                "data": {"user_email": target_email, "can_resend": True, "can_change_email": True}
+            }
         }
 
     # ── 5. Name Input Detection ────────────────────────────────────────────────
@@ -324,7 +364,10 @@ def reasoning_node(state: AgentState):
                 "messages": [AIMessage(content=f"Nice to meet you, **{user_name}**! What is your email address so we can secure your session and send you detailed project briefs?")],
                 "user_name": user_name,
                 "pending_step": "COLLECT_EMAIL",
-                "tool_payload": None
+                "tool_payload": {
+                    "type": "lead_form",
+                    "data": {"title": "Submit Email Address", "fields": ["email"]}
+                }
             }
 
     # ── 6. Standalone Greetings ────────────────────────────────────────────────
@@ -348,9 +391,15 @@ def reasoning_node(state: AgentState):
             }
         else:
             return {
-                "messages": [AIMessage(content="👋 Welcome to Aanandi TechnoSoft! I'm Aanandi, your AI Sales Engineer.\n\nHow can I help you today? Ask me any question about our projects, AI voice bots, or services!")],
+                "messages": [AIMessage(content="👋 Welcome to Aanandi TechnoSoft! I'm Aanandi, your AI Sales Engineer.\n\nPlease fill out your details below to start your session:")],
                 "pending_step": "COLLECT_NAME" if not user_name else pending_step,
-                "tool_payload": None
+                "tool_payload": {
+                    "type": "lead_form",
+                    "data": {
+                        "title": "Quick Session Verification",
+                        "fields": ["name", "email", "phone"]
+                    }
+                }
             }
 
     # ── 7. Non-blocking Product / Knowledge Base Q&A ────────────────────────────
@@ -359,21 +408,26 @@ def reasoning_node(state: AgentState):
 
     # If lead is NOT yet verified, append the appropriate next prompt in sequence and suppress MCQ options
     if not is_verified:
+        payload = None
         if pending_step == "COLLECT_NAME" or not user_name:
             ai_answer += "\n\n---\n👤 **Before we proceed further, may I know your full name?**"
             next_step = "COLLECT_NAME"
+            payload = {"type": "lead_form", "data": {"title": "Quick Verification Form", "fields": ["name", "email", "phone"]}}
         elif pending_step == "COLLECT_EMAIL" or not user_email:
             display_name = user_name if user_name else "there"
             ai_answer += f"\n\n---\n📧 **To secure your session, {display_name}, what is your email address?**"
             next_step = "COLLECT_EMAIL"
+            payload = {"type": "lead_form", "data": {"title": "Provide Email Address", "fields": ["email"]}}
         elif pending_step == "COLLECT_PHONE" or not user_phone:
             display_name = user_name if user_name else "there"
             ai_answer += f"\n\n---\n📱 **{display_name}, what is your contact phone number to complete verification?**"
             next_step = "COLLECT_PHONE"
+            payload = {"type": "lead_form", "data": {"title": "Provide Contact Phone", "fields": ["phone"]}}
         elif pending_step == "VERIFY_OTP":
             target_mail = user_email or "your email"
             ai_answer += f"\n\n---\n🔐 **Please check your inbox and enter the 6-digit verification code sent to {target_mail}.**"
             next_step = "VERIFY_OTP"
+            payload = {"type": "otp_options", "data": {"user_email": target_mail, "can_resend": True, "can_change_email": True}}
         else:
             next_step = pending_step
 
@@ -381,7 +435,7 @@ def reasoning_node(state: AgentState):
             "messages": [AIMessage(content=ai_answer)],
             "lead_stage": "QUALIFYING",
             "pending_step": next_step,
-            "tool_payload": None
+            "tool_payload": payload
         }
 
     # If already verified, return AI answer WITH suggested follow-ups MCQ payload

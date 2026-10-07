@@ -86,51 +86,15 @@ class EdgeTTSService(TTSService):
             print(f"[EdgeTTS] Error rendering voice: {e}")
 
 
-async def book_meeting(function_name, tool_call_id, args, llm, context, result_callback):
-    """Triggers the Cal.com API v2 to book an appointment."""
-    url = "https://api.cal.com/v2/bookings"
-    payload = {
-        "start": args.get("start_time"),
-        "eventTypeId": int(os.getenv("CAL_EVENT_TYPE_ID", "7297448")),
-        "attendee": {
-            "name": args.get("name", "Valued Client"),
-            "email": args.get("email", "client@example.com"),
-            "timeZone": "Asia/Kolkata",
-            "language": "en"
-        }
-    }
-    api_key = os.getenv("CAL_API_KEY") or os.getenv("CAL_COM_API_KEY", "")
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "cal-api-version": "2024-08-13",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        if response.status_code in (200, 201):
-            await result_callback({"status": "success", "message": "Meeting successfully scheduled."})
-        else:
-            await result_callback({"status": "error", "message": "Slot unavailable. Please choose another time."})
-    except Exception as e:
-        await result_callback({"status": "error", "message": str(e)})
-
 # Pre-initialize STT model to make connection handling instant
 stt = WhisperSTTService(model="tiny")
 
-async def run_voice_agent(transport):
+async def run_voice_agent(transport, chat_history: list = None):
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
     gemini_key = os.getenv("GEMINI_API_KEY", "")
 
     # 1. Initialize LLM with automatic working key selection
-    if openrouter_key and openrouter_key.startswith("sk-or"):
-        from pipecat.services.openai.llm import OpenAILLMService
-        llm = OpenAILLMService(
-            api_key=openrouter_key,
-            base_url="https://openrouter.ai/api/v1",
-            settings=OpenAILLMService.Settings(model="openai/gpt-4o-mini")
-        )
-    elif gemini_key and gemini_key.startswith("AIzaSy"):
+    if gemini_key and gemini_key.startswith("AIzaSy"):
         from pipecat.services.google.llm import GoogleLLMService, GoogleLLMSettings
         llm = GoogleLLMService(
             api_key=gemini_key,
@@ -144,20 +108,28 @@ async def run_voice_agent(transport):
             settings=OpenAILLMService.Settings(model="openai/gpt-4o-mini")
         )
 
-    llm.register_function("book_meeting", book_meeting)
-
     # 2. Resilient Neural Voice Synthesis (EdgeTTS)
     tts = EdgeTTSService(voice="en-IN-NeerjaNeural", sample_rate=16000)
 
-    context = LLMContext(
-        messages=[{
-            "role": "system",
-            "content": (
-                "You are Aanandi, an AI sales engineer for Aanandi TechnoSoft. Keep answers brief (1-2 sentences). "
-                "Help qualify leads and book software demos."
-            )
-        }]
-    )
+    # 3. Build memory context combining System Prompt + Previous Chat History
+    base_messages = [{
+        "role": "system",
+        "content": (
+            "You are Aanandi, an AI sales engineer for Aanandi TechnoSoft. "
+            "You are now on a live voice call with the user, transitioning from a text chat. "
+            "DO NOT ask to book a calendar slot, as they are already speaking with you directly. "
+            "Review the chat history, greet them by name if known, and ask follow-up questions "
+            "about their project requirements or enterprise needs. Keep answers conversational and brief (1-2 sentences)."
+        )
+    }]
+
+    # Inject history from text chat session if available
+    if chat_history:
+        base_messages.extend(chat_history)
+    else:
+        base_messages.append({"role": "assistant", "content": "Hello! I'm Aanandi. How can I help you with your project today?"})
+
+    context = LLMContext(messages=base_messages)
     context_aggregator = LLMContextAggregatorPair(context)
 
     pipeline = Pipeline([
