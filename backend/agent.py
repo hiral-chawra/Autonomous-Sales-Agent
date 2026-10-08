@@ -274,7 +274,10 @@ def reasoning_node(state: AgentState):
             "messages": [AIMessage(content=f"Thank you, **{display_name}**! What is your contact phone number to finalize your session verification?")],
             "user_email": extracted_email,
             "pending_step": "COLLECT_PHONE",
-            "tool_payload": None
+            "tool_payload": {
+                "type": "lead_form",
+                "data": {"title": "Provide Contact Phone", "fields": ["phone"]}
+            }
         }
 
     # ── 3. OTP Escape Hatch & Verification ─────────────────────────────────────
@@ -416,13 +419,13 @@ def reasoning_node(state: AgentState):
             }
         else:
             return {
-                "messages": [AIMessage(content="👋 Welcome to Aanandi TechnoSoft! I'm Aanandi, your AI Sales Engineer.\n\nPlease fill out your details below to start your session:")],
+                "messages": [AIMessage(content="👋 Welcome to Aanandi TechnoSoft! I'm Aanandi, your AI Sales Engineer.\n\nMay I please have your full name to start our conversation?")],
                 "pending_step": "COLLECT_NAME" if not user_name else pending_step,
                 "tool_payload": {
                     "type": "lead_form",
                     "data": {
                         "title": "Quick Session Verification",
-                        "fields": ["name", "email", "phone"]
+                        "fields": ["name"]
                     }
                 }
             }
@@ -437,7 +440,7 @@ def reasoning_node(state: AgentState):
         if pending_step == "COLLECT_NAME" or not user_name:
             ai_answer += "\n\n---\n👤 **Before we proceed further, may I know your full name?**"
             next_step = "COLLECT_NAME"
-            payload = {"type": "lead_form", "data": {"title": "Quick Verification Form", "fields": ["name", "email", "phone"]}}
+            payload = {"type": "lead_form", "data": {"title": "Provide Your Name", "fields": ["name"]}}
         elif pending_step == "COLLECT_EMAIL" or not user_email:
             display_name = user_name if user_name else "there"
             ai_answer += f"\n\n---\n📧 **To secure your session, {display_name}, what is your email address?**"
