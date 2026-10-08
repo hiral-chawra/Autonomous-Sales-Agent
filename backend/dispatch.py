@@ -37,7 +37,33 @@ def send_email_dispatch(to_email: str, subject: str, text_content: str) -> dict:
             print(f"[SMTP EMAIL SENT] Real email sent to: {to_email} | Subject: {subject}")
             return {"success": True, "provider": "smtp", "mock": False}
         except Exception as e:
-            print(f"[SMTP ERROR] Failed to send email via SMTP to {to_email}: {e}. Attempting Resend API fallback...")
+            print(f"[SMTP ERROR] Primary SMTP failed to send email to {to_email}: {e}. Trying secondary SMTP...")
+
+    # 1B. Try Secondary SMTP (SMTP2_USER / SMTP2_PASS)
+    smtp2_user = os.getenv("SMTP2_USER") or os.getenv("SMTP2_EMAIL")
+    smtp2_pass = os.getenv("SMTP2_PASS") or os.getenv("SMTP2_PASSWORD")
+
+    if smtp2_user and smtp2_pass:
+        smtp2_host_raw = os.getenv("SMTP2_HOST", "smtp.gmail.com")
+        smtp2_host = smtp2_host_raw.replace("://", "").replace("http", "").replace("https", "").strip("/")
+        if not smtp2_host or smtp2_host == "gmail.com":
+            smtp2_host = "smtp.gmail.com"
+        smtp2_port = int(os.getenv("SMTP2_PORT", "587"))
+        try:
+            msg2 = MIMEMultipart()
+            msg2["From"] = f"Aanandi Sales <{smtp2_user}>"
+            msg2["To"] = to_email
+            msg2["Subject"] = subject
+            msg2.attach(MIMEText(text_content, "plain"))
+
+            with smtplib.SMTP(smtp2_host, smtp2_port) as server:
+                server.starttls()
+                server.login(smtp2_user, smtp2_pass)
+                server.send_message(msg2)
+            print(f"[SMTP2 EMAIL SENT] Real email sent via Secondary SMTP ({smtp2_user}) to: {to_email} | Subject: {subject}")
+            return {"success": True, "provider": "smtp2", "mock": False}
+        except Exception as e:
+            print(f"[SMTP2 ERROR] Secondary SMTP failed to send email to {to_email}: {e}. Attempting Resend API fallback...")
 
     # 2. Try Resend API (Fallback or primary if no SMTP)
     resend_api_key = os.getenv("RESEND_API_KEY")
