@@ -5,6 +5,8 @@ import os
 import requests
 from dotenv import load_dotenv
 
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -110,10 +112,8 @@ async def run_voice_agent(transport, chat_history: list = None):
 
     # 2. Resilient Neural Voice Synthesis (EdgeTTS) & VAD Processor
     tts = EdgeTTSService(voice="en-IN-NeerjaNeural", sample_rate=16000)
-    
-    from pipecat.audio.vad.silero import SileroVADAnalyzer
-    from pipecat.processors.audio.vad_processor import VADProcessor
     vad_analyzer = SileroVADAnalyzer()
+
     vad_processor = VADProcessor(vad_analyzer=vad_analyzer)
 
     # 3. Build memory context combining System Prompt + Previous Chat History
@@ -150,4 +150,4 @@ async def run_voice_agent(transport, chat_history: list = None):
 
     task = PipelineTask(pipeline, params=PipelineParams())
     runner = PipelineRunner()
-    await runner.run(task)
+    await runner.run(task)
