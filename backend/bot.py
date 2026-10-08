@@ -47,7 +47,7 @@ class EdgeTTSService(TTSService):
         super().__init__(sample_rate=sample_rate, **kwargs)
         self._voice = voice
 
-    async def run_tts(self, text: str):
+    async def run_tts(self, text: str, *args, **kwargs):
         try:
             communicate = edge_tts.Communicate(text, self._voice)
             mp3_bytes = b""
