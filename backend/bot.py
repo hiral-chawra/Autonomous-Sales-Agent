@@ -61,8 +61,8 @@ class EdgeTTSService(TTSService):
             container = av.open(io.BytesIO(mp3_bytes))
             resampler = av.AudioResampler(format="s16", layout="mono", rate=self.sample_rate)
 
-            # Yield PCM16 frames in 1600-byte (50ms) chunks for real-time audio playback
-            chunk_size = 1600
+            # 16,000 bytes = 500ms chunks at 16kHz 16-bit mono (smooth playback without stutter)
+            chunk_size = 16000
             buffer = bytearray()
 
             for frame in container.decode(audio=0):
@@ -78,6 +78,10 @@ class EdgeTTSService(TTSService):
                             num_channels=1
                         )
 
+            # Flush any remaining frames from the resampler
+            for rf in resampler.resample(None):
+                buffer.extend(bytes(rf.planes[0]))
+
             if len(buffer) > 0:
                 yield OutputAudioRawFrame(
                     audio=bytes(buffer),
@@ -88,7 +92,7 @@ class EdgeTTSService(TTSService):
             print(f"[EdgeTTS] Error rendering voice: {e}")
 
 
-# Pre-initialize STT model to make connection handling instant
+# Pre-initialize STT model
 stt = WhisperSTTService(model="tiny")
 
 async def run_voice_agent(transport, chat_history: list = None):
@@ -112,8 +116,9 @@ async def run_voice_agent(transport, chat_history: list = None):
 
     # 2. Resilient Neural Voice Synthesis (EdgeTTS) & VAD Processor
     tts = EdgeTTSService(voice="en-IN-NeerjaNeural", sample_rate=16000)
-    vad_analyzer = SileroVADAnalyzer()
-
+    
+    # Configure VAD to detect end-of-speech faster (0.4s pause instead of ~1s)
+    vad_analyzer = SileroVADAnalyzer(params=SileroVADAnalyzer.VADParams(stop_secs=0.4))
     vad_processor = VADProcessor(vad_analyzer=vad_analyzer)
 
     # 3. Build memory context combining System Prompt + Previous Chat History
