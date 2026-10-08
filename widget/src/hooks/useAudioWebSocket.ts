@@ -103,8 +103,11 @@ export function useAudioWebSocket({
         if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
         streamRef.current = stream;
 
-        // 2. Create AudioContext at 16kHz
+        // 2. Create AudioContext at 16kHz & ensure it is active
         const ctx = new AudioContext({ sampleRate: 16000 });
+        if (ctx.state === 'suspended') {
+          await ctx.resume();
+        }
         audioCtxRef.current = ctx;
 
         // 3. Mic source → gain (for mute) → analyser → worklet

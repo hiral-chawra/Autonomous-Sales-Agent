@@ -108,8 +108,13 @@ async def run_voice_agent(transport, chat_history: list = None):
             settings=OpenAILLMService.Settings(model="openai/gpt-4o-mini")
         )
 
-    # 2. Resilient Neural Voice Synthesis (EdgeTTS)
+    # 2. Resilient Neural Voice Synthesis (EdgeTTS) & VAD Processor
     tts = EdgeTTSService(voice="en-IN-NeerjaNeural", sample_rate=16000)
+    
+    from pipecat.audio.vad.silero import SileroVADAnalyzer
+    from pipecat.processors.audio.vad_processor import VADProcessor
+    vad_analyzer = SileroVADAnalyzer()
+    vad_processor = VADProcessor(vad_analyzer=vad_analyzer)
 
     # 3. Build memory context combining System Prompt + Previous Chat History
     base_messages = [{
@@ -134,6 +139,7 @@ async def run_voice_agent(transport, chat_history: list = None):
 
     pipeline = Pipeline([
         transport.input(),
+        vad_processor,
         stt,
         context_aggregator.user(),
         llm,
