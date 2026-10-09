@@ -287,6 +287,9 @@ def reasoning_node(state: AgentState):
         # Check for escape hatch requests (Resend OTP or Change Email)
         if any(k in last_msg.lower() for k in ["resend", "resend_otp", "resend code", "didn't receive", "didnt receive"]):
             new_otp = str(random.randint(100000, 999999))
+            print(f"\n==================================================", flush=True)
+            print(f"🔑 RESENT SECURITY OTP FOR {target_mail}: {new_otp}", flush=True)
+            print(f"==================================================\n", flush=True)
             from dispatch import send_email_dispatch
             send_email_dispatch(
                 to_email=target_mail,
@@ -294,7 +297,7 @@ def reasoning_node(state: AgentState):
                 text_content=f"Hello {user_name or 'Valued Customer'},\n\nYour new 6-digit security code is: {new_otp}\nValid for 10 minutes."
             )
             return {
-                "messages": [AIMessage(content=f"🔄 **New verification code sent!**\n\nPlease check your inbox (**{target_mail}**) and enter the 6-digit code below.")],
+                "messages": [AIMessage(content=f"🔄 **New verification code sent!**\n\nPlease check your inbox & spam folder (**{target_mail}**) and enter the 6-digit code below.")],
                 "user_email": target_mail,
                 "otp_code": new_otp,
                 "pending_step": "VERIFY_OTP",
@@ -352,6 +355,10 @@ def reasoning_node(state: AgentState):
         target_email = user_email.strip() if (user_email and "@" in user_email) else os.getenv("SMTP_EMAIL", "pyashkumar0312@gmail.com")
 
         new_otp = str(random.randint(100000, 999999))
+        print(f"\n==================================================", flush=True)
+        print(f"🔑 SECURITY OTP GENERATED FOR {target_email}: {new_otp}", flush=True)
+        print(f"==================================================\n", flush=True)
+
         from dispatch import send_email_dispatch
         dispatch_res = send_email_dispatch(
             to_email=target_email,
@@ -368,7 +375,7 @@ def reasoning_node(state: AgentState):
         else:
             msg_text = (
                 f"🔐 We've sent a 6-digit verification code to **{target_email}**!\n\n"
-                "Please check your inbox and type the 6-digit security code below to verify your session."
+                "Please check your inbox (and spam folder) and type the 6-digit security code below to verify your session."
             )
 
         return {
