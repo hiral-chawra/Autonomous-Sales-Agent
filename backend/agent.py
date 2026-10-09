@@ -188,7 +188,8 @@ def generate_ai_answer(user_query: str, kb_data: str) -> str:
                 api_key=openrouter_key,
                 base_url="https://openrouter.ai/api/v1",
                 model="openai/gpt-4o-mini",
-                temperature=0.3
+                temperature=0.3,
+                request_timeout=5.0
             )
             sys_msg = SystemMessage(content=(
                 "You are Aanandi, the elite AI Sales Engineer for Aanandi TechnoSoft. "
@@ -319,6 +320,19 @@ def reasoning_node(state: AgentState):
             }
 
         cleaned_digits = "".join(filter(str.isdigit, last_msg))
+
+        # Handle 10-digit phone number sent while waiting for OTP
+        if len(cleaned_digits) in [10, 11, 12] and not is_user_query(last_msg):
+            return {
+                "messages": [AIMessage(content=f"🔐 **We've dispatched your 6-digit verification code to {target_mail}!**\n\nPlease check your inbox and enter the 6-digit code below to complete session verification.")],
+                "user_phone": last_msg.strip(),
+                "pending_step": "VERIFY_OTP",
+                "tool_payload": {
+                    "type": "otp_options",
+                    "data": {"user_email": target_mail, "can_resend": True, "can_change_email": True}
+                }
+            }
+
         if len(cleaned_digits) == 6 and not is_user_query(last_msg):
             if cleaned_digits == otp_code:
                 return {
