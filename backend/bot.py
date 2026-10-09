@@ -6,6 +6,7 @@ import requests
 from dotenv import load_dotenv
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -98,7 +99,7 @@ class EdgeTTSService(TTSService):
 
 
 # Pre-initialize STT model
-stt = WhisperSTTService(model="tiny")
+stt = WhisperSTTService(settings=WhisperSTTService.Settings(model="tiny"))
 
 async def run_voice_agent(transport, chat_history: list = None):
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
@@ -123,7 +124,7 @@ async def run_voice_agent(transport, chat_history: list = None):
     tts = EdgeTTSService(voice="en-IN-NeerjaNeural", sample_rate=16000)
     
     # Configure VAD to detect end-of-speech faster (0.4s pause instead of ~1s)
-    vad_analyzer = SileroVADAnalyzer(params=SileroVADAnalyzer.VADParams(stop_secs=0.4))
+    vad_analyzer = SileroVADAnalyzer(params=VADParams(stop_secs=0.4))
     vad_processor = VADProcessor(vad_analyzer=vad_analyzer)
 
     # 3. Build memory context combining System Prompt + Previous Chat History
