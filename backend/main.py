@@ -325,6 +325,7 @@ async def voice_websocket_endpoint(websocket: WebSocket, session_id: str):
             audio_in_sample_rate=16000,
             audio_out_sample_rate=16000,
             add_wav_header=False,
+            audio_out_write_timeout_secs=300.0,
             serializer=RawPCMFrameSerializer(sample_rate=16000, num_channels=1)
         )
     )
