@@ -1,7 +1,12 @@
 import os
+import sys
 import json
 import datetime
 import razorpay
+
+# Guarantee backend directory is in sys.path for clean module imports regardless of launch CWD
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
