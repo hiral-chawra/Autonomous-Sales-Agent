@@ -16,7 +16,7 @@ from pipecat.processors.aggregators.llm_response_universal import LLMContextAggr
 from pipecat.processors.aggregators.llm_context import LLMContext
 
 from pipecat.serializers.base_serializer import FrameSerializer
-from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame
+from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame, TTSStartedFrame, TTSStoppedFrame
 
 load_dotenv()
 
@@ -49,6 +49,7 @@ class EdgeTTSService(TTSService):
 
     async def run_tts(self, text: str, *args, **kwargs):
         try:
+            yield TTSStartedFrame()
             communicate = edge_tts.Communicate(text, self._voice)
             mp3_bytes = b""
             async for chunk in communicate.stream():
@@ -56,6 +57,7 @@ class EdgeTTSService(TTSService):
                     mp3_bytes += chunk["data"]
 
             if not mp3_bytes:
+                yield TTSStoppedFrame()
                 return
 
             container = av.open(io.BytesIO(mp3_bytes))
@@ -88,8 +90,11 @@ class EdgeTTSService(TTSService):
                     sample_rate=self.sample_rate,
                     num_channels=1
                 )
+            yield TTSStoppedFrame()
         except Exception as e:
             print(f"[EdgeTTS] Error rendering voice: {e}")
+            yield TTSStoppedFrame()
+
 
 
 # Pre-initialize STT model
