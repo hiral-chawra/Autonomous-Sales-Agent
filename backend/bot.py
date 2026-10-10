@@ -17,7 +17,7 @@ from pipecat.processors.aggregators.llm_response_universal import LLMContextAggr
 from pipecat.processors.aggregators.llm_context import LLMContext
 
 from pipecat.serializers.base_serializer import FrameSerializer
-from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame, TTSStartedFrame, TTSStoppedFrame
+from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame, TTSStartedFrame, TTSStoppedFrame, TTSAudioRawFrame
 
 load_dotenv()
 
@@ -75,7 +75,7 @@ class EdgeTTSService(TTSService):
                     while len(buffer) >= chunk_size:
                         raw_chunk = bytes(buffer[:chunk_size])
                         del buffer[:chunk_size]
-                        yield OutputAudioRawFrame(
+                        yield TTSAudioRawFrame(
                             audio=raw_chunk,
                             sample_rate=self.sample_rate,
                             num_channels=1
@@ -86,7 +86,7 @@ class EdgeTTSService(TTSService):
                 buffer.extend(bytes(rf.planes[0]))
 
             if len(buffer) > 0:
-                yield OutputAudioRawFrame(
+                yield TTSAudioRawFrame(
                     audio=bytes(buffer),
                     sample_rate=self.sample_rate,
                     num_channels=1

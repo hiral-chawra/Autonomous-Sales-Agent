@@ -161,10 +161,12 @@ export function useAudioWebSocket({
           const scriptNode = ctx.createScriptProcessor(bufferSize, 1, 1);
           scriptNode.onaudioprocess = (ev) => {
             const input = ev.inputBuffer.getChannelData(0);
+            const output = ev.outputBuffer.getChannelData(0);
             const pcm = new Int16Array(input.length);
             for (let i = 0; i < input.length; i++) {
               const s = Math.max(-1, Math.min(1, input[i]));
               pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+              output[i] = 0; // Prevent echo!
             }
             onPCMChunk(pcm.buffer);
           };
