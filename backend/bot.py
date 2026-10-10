@@ -64,8 +64,8 @@ class EdgeTTSService(TTSService):
             container = av.open(io.BytesIO(mp3_bytes))
             resampler = av.AudioResampler(format="s16", layout="mono", rate=self.sample_rate)
 
-            # 16,000 bytes = 500ms chunks at 16kHz 16-bit mono (smooth playback without stutter)
-            chunk_size = 16000
+            # 3,200 bytes = 100ms chunks at 16kHz 16-bit mono (ultra-smooth streaming)
+            chunk_size = 3200
             buffer = bytearray()
 
             for frame in container.decode(audio=0):

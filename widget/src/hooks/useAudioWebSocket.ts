@@ -81,6 +81,7 @@ export function useAudioWebSocket({
   const gainNodeRef = useRef<GainNode | null>(null); // mic gain for mute
   const outputGainRef = useRef<GainNode | null>(null);
   const playbackQueueRef = useRef<AudioBuffer[]>([]);
+  const nextStartTimeRef = useRef<number>(0);
   const isPlayingRef = useRef(false);
   const isMutedRef = useRef(false);
 
@@ -242,29 +243,28 @@ export function useAudioWebSocket({
     };
   }, [apiBase, sessionId]);
 
-  // ── Playback queue drain ──────────────────────────────────────────
+  // ── Playback queue drain (Sample-accurate timeline scheduling) ────
   const drainPlaybackQueue = (ctx: AudioContext) => {
-    if (isPlayingRef.current) return;
-    playNext(ctx);
-  };
+    while (playbackQueueRef.current.length > 0) {
+      const buffer = playbackQueueRef.current.shift();
+      if (!buffer) break;
 
-  const playNext = (ctx: AudioContext) => {
-    const buffer = playbackQueueRef.current.shift();
-    if (!buffer) {
-      isPlayingRef.current = false;
-      return;
-    }
-    isPlayingRef.current = true;
+      const node = ctx.createBufferSource();
+      node.buffer = buffer;
+      if (outputGainRef.current) {
+        node.connect(outputGainRef.current);
+      } else {
+        node.connect(ctx.destination);
+      }
 
-    const node = ctx.createBufferSource();
-    node.buffer = buffer;
-    if (outputGainRef.current) {
-      node.connect(outputGainRef.current);
-    } else {
-      node.connect(ctx.destination);
+      const now = ctx.currentTime;
+      if (nextStartTimeRef.current < now) {
+        nextStartTimeRef.current = now + 0.02; // Small 20ms jitter buffer
+      }
+
+      node.start(nextStartTimeRef.current);
+      nextStartTimeRef.current += buffer.duration;
     }
-    node.onended = () => playNext(ctx);
-    node.start();
   };
 
   // ── Teardown ──────────────────────────────────────────────────────
@@ -276,6 +276,7 @@ export function useAudioWebSocket({
     audioCtxRef.current?.close();
     audioCtxRef.current = null;
     playbackQueueRef.current = [];
+    nextStartTimeRef.current = 0;
     isPlayingRef.current = false;
   };
 
