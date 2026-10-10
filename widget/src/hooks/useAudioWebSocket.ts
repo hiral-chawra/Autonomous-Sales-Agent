@@ -217,12 +217,19 @@ export function useAudioWebSocket({
               }
             } catch { /* ignore */ }
           } else if (ev.data instanceof ArrayBuffer && ev.data.byteLength > 0) {
-            // Binary PCM audio from Edge TTS
-            const pcm16 = new Int16Array(ev.data);
-            const float32 = new Float32Array(pcm16.length);
-            for (let i = 0; i < pcm16.length; i++) {
-              float32[i] = pcm16[i] / 32768;
+            // Binary PCM audio from Edge TTS / Pipecat
+            // Fix: Use DataView to explicitly read Little-Endian 16-bit PCM integers
+            // Using Int16Array directly can cause severe static/hissing if network byte order 
+            // is misinterpreted or platform native endianness doesn't match the stream.
+            const view = new DataView(ev.data);
+            const numSamples = Math.floor(ev.data.byteLength / 2);
+            const float32 = new Float32Array(numSamples);
+            
+            for (let i = 0; i < numSamples; i++) {
+              // true = Little-Endian. Divide by 32768 to normalize to Web Audio API's expected [-1.0, 1.0] range
+              float32[i] = view.getInt16(i * 2, true) / 32768; 
             }
+            
             const audioBuffer = ctx.createBuffer(1, float32.length, 16000);
             audioBuffer.copyToChannel(float32, 0);
             playbackQueueRef.current.push(audioBuffer);
