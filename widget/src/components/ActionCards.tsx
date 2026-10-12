@@ -854,6 +854,7 @@ function CalendarCard({
   const [slots, setSlots] = useState<TimeSlot[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
+  const [retryCount, setRetryCount] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
 
   const amount = tier === 'enquiry' ? 100 : 500;
@@ -864,18 +865,22 @@ function CalendarCard({
         const res = await fetch(
           `${apiBase}/api/v1/scheduling/availability?session_id=${sessionId}&week_offset=${weekOffset}`
         );
-        if (!res.ok) throw new Error('Failed to fetch slots');
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(errorData.detail || 'Could not load live Cal.com availability.');
+        }
         const data: { slots: TimeSlot[] } = await res.json();
         setSlots(data.slots.filter((s) => s.available));
         setState('picking');
-      } catch {
-        setSlots(generateDemoSlots());
-        setState('picking');
+      } catch (error) {
+        setSlots([]);
+        setErrorMsg(error instanceof Error ? error.message : 'Could not load live Cal.com availability.');
+        setState('error');
       }
     };
     setState('loading');
     load();
-  }, [apiBase, sessionId, weekOffset]);
+  }, [apiBase, sessionId, weekOffset, retryCount]);
 
   const handleProceedToPayment = () => {
     if (!selectedSlot) return;
@@ -899,6 +904,29 @@ function CalendarCard({
             className="animate-spin"
           />
         </div>
+      </CardShell>
+    );
+  }
+
+  if (state === 'error') {
+    return (
+      <CardShell title="Calendar Unavailable" icon={<AlertCircle size={14} color="#EF4444" />}>
+        <p style={{ fontSize: '12px', color: '#DBD7FA', textAlign: 'center', marginBottom: '8px' }}>{errorMsg}</p>
+        <button
+          onClick={() => setRetryCount((count) => count + 1)}
+          style={{
+            width: '100%',
+            padding: '9px',
+            borderRadius: '10px',
+            background: 'rgba(149,145,244,0.12)',
+            border: '1px solid rgba(149,145,244,0.25)',
+            color: '#DBD7FA',
+            cursor: 'pointer',
+            fontWeight: 700,
+          }}
+        >
+          Retry
+        </button>
       </CardShell>
     );
   }
@@ -1535,21 +1563,4 @@ function CardShell({
       {children}
     </div>
   );
-}
-
-function generateDemoSlots(): TimeSlot[] {
-  const slots: TimeSlot[] = [];
-  const now = new Date();
-  for (let d = 1; d <= 5; d++) {
-    for (const h of [9, 11, 14, 16]) {
-      const start = new Date(now);
-      start.setDate(now.getDate() + d);
-      start.setHours(h, 0, 0, 0);
-      const end = new Date(start);
-      end.setMinutes(30);
-      if (d === 1 && h < now.getHours() + 2) continue;
-      slots.push({ start: start.toISOString(), end: end.toISOString(), available: true });
-    }
-  }
-  return slots;
 }

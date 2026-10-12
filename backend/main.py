@@ -1,8 +1,10 @@
 import os
 import sys
 import json
+import asyncio
 import datetime
 import razorpay
+import requests
 
 # Guarantee backend directory is in sys.path for clean module imports regardless of launch CWD
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -16,6 +18,7 @@ from pipecat.transports.websocket.server import WebsocketServerTransport, Websoc
 from bot import run_voice_agent
 from agent import app as sales_agent
 from db import leads_collection, conversations_collection
+from dispatch import send_email_dispatch
 from langchain_core.messages import HumanMessage
 
 load_dotenv()
@@ -332,16 +335,67 @@ async def voice_websocket_endpoint(websocket: WebSocket, session_id: str):
     await run_voice_agent(transport, chat_history=formatted_history)
 
 # ── 4. Calendar Scheduling Availability & Booking ─────────────────────
+def _cal_scheduling_config() -> tuple[str, int, str]:
+    api_key = os.getenv("CAL_API_KEY") or os.getenv("CAL_COM_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Cal.com scheduling is not configured.")
+
+    try:
+        event_type_id = int(os.getenv("CAL_EVENT_TYPE_ID", "7297448"))
+    except ValueError as exc:
+        raise HTTPException(status_code=503, detail="CAL_EVENT_TYPE_ID must be an integer.") from exc
+
+    return api_key, event_type_id, os.getenv("CAL_TIME_ZONE", "Asia/Kolkata")
+
+
 @app.get("/api/v1/scheduling/availability")
 async def get_availability(session_id: str, week_offset: int = 0):
-    now = datetime.datetime.now(datetime.timezone.utc)
+    api_key, event_type_id, time_zone = _cal_scheduling_config()
+    start_date = datetime.datetime.now(datetime.timezone.utc).date() + datetime.timedelta(days=1 + week_offset * 7)
+    end_date = start_date + datetime.timedelta(days=4)
+
+    try:
+        response = await asyncio.to_thread(
+            requests.get,
+            "https://api.cal.com/v2/slots",
+            params={
+                "eventTypeId": event_type_id,
+                "start": start_date.isoformat(),
+                "end": end_date.isoformat(),
+                "timeZone": time_zone,
+                "format": "range",
+            },
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "cal-api-version": "2024-09-04",
+            },
+            timeout=15,
+        )
+        if not response.ok:
+            print(f"[CAL.COM] Availability request failed with status {response.status_code}.", flush=True)
+            raise HTTPException(status_code=502, detail="Cal.com could not load availability.")
+        calendar_data = response.json().get("data")
+    except requests.RequestException as exc:
+        print(f"[CAL.COM] Availability request failed: {type(exc).__name__}.", flush=True)
+        raise HTTPException(status_code=502, detail="Cal.com could not load availability.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="Cal.com returned an invalid availability response.") from exc
+
+    if isinstance(calendar_data, dict) and "slots" in calendar_data:
+        calendar_data = calendar_data["slots"]
+    if not isinstance(calendar_data, dict):
+        raise HTTPException(status_code=502, detail="Cal.com returned an invalid availability response.")
+
     slots = []
-    for d in range(1, 6):
-        for h in [9, 11, 14, 16]:
-            start = now + datetime.timedelta(days=d + (week_offset * 7))
-            start = start.replace(hour=h, minute=0, second=0, microsecond=0)
-            end = start + datetime.timedelta(minutes=30)
-            slots.append({"start": start.isoformat(), "end": end.isoformat(), "available": True})
+    for day_slots in calendar_data.values():
+        if not isinstance(day_slots, list):
+            raise HTTPException(status_code=502, detail="Cal.com returned an invalid availability response.")
+        for slot in day_slots:
+            if not isinstance(slot, dict) or not slot.get("start") or not slot.get("end"):
+                raise HTTPException(status_code=502, detail="Cal.com returned an invalid availability response.")
+            slots.append({"start": slot["start"], "end": slot["end"], "available": True})
+
+    slots.sort(key=lambda slot: slot["start"])
     return {"slots": slots}
 
 class BookingRequest(BaseModel):
@@ -354,52 +408,98 @@ class BookingRequest(BaseModel):
 
 @app.post("/api/v1/scheduling/book")
 async def book_slot(payload: BookingRequest):
+    api_key, event_type_id, time_zone = _cal_scheduling_config()
     lead = {}
     try:
         lead = await leads_collection.find_one({"session_id": payload.session_id}) or {}
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[CAL.COM] Could not load lead details: {type(exc).__name__}.", flush=True)
+        if not payload.user_email:
+            raise HTTPException(status_code=503, detail="Could not retrieve the attendee email address.") from exc
 
-    user_email = payload.user_email or lead.get("email") or os.getenv("SMTP_EMAIL", "pyashkumar0312@gmail.com")
-    user_name = lead.get("full_name", "Valued Client")
+    user_email = payload.user_email or lead.get("email")
+    if not user_email:
+        raise HTTPException(status_code=400, detail="An attendee email address is required to book this meeting.")
+    user_name = lead.get("full_name") or "Valued Client"
 
-    start_str = payload.slot_start
     try:
-        dt_start = datetime.datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-        start_fmt = dt_start.strftime("%A, %B %d, %Y at %I:%M %p UTC")
-    except Exception:
-        start_fmt = start_str
+        dt_start = datetime.datetime.fromisoformat(payload.slot_start.replace("Z", "+00:00"))
+        if dt_start.tzinfo is None:
+            raise ValueError("slot_start must include a timezone")
+        start_iso = dt_start.astimezone(datetime.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        start_fmt = dt_start.strftime("%A, %B %d, %Y at %I:%M %p %Z")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="slot_start must be a valid timezone-aware ISO date.") from exc
 
-    meeting_url = "https://meet.google.com/aan-andi-demo"
+    try:
+        response = await asyncio.to_thread(
+            requests.post,
+            "https://api.cal.com/v2/bookings",
+            json={
+                "eventTypeId": event_type_id,
+                "start": start_iso,
+                "attendee": {
+                    "name": user_name,
+                    "email": user_email,
+                    "timeZone": time_zone,
+                    "language": "en",
+                },
+            },
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "cal-api-version": "2024-08-13",
+            },
+            timeout=15,
+        )
+        if response.status_code == 409:
+            raise HTTPException(status_code=409, detail="That Cal.com slot is no longer available. Please choose another time.")
+        if not response.ok:
+            print(f"[CAL.COM] Booking request failed with status {response.status_code}.", flush=True)
+            raise HTTPException(status_code=502, detail="Cal.com rejected the booking. Check the event type and attendee details.")
+        booking_data = response.json().get("data")
+    except requests.RequestException as exc:
+        print(f"[CAL.COM] Booking request failed: {type(exc).__name__}.", flush=True)
+        raise HTTPException(status_code=502, detail="Cal.com could not confirm the booking.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail="Cal.com returned an invalid booking response.") from exc
 
-    # Send confirmation email to client
+    if not isinstance(booking_data, dict) or not booking_data.get("id"):
+        raise HTTPException(status_code=502, detail="Cal.com returned an invalid booking response.")
+
+    meeting_url = booking_data.get("meetingUrl")
     client_body = (
         f"Hello {user_name},\n\n"
         f"Your call with Aanandi TechnoSoft ({payload.tier.upper() if payload.tier else 'ENQUIRY'} Tier) has been confirmed!\n\n"
-        f"📅 Scheduled Time: {start_fmt}\n"
-        f"🔗 Google Meet Link: {meeting_url}\n\n"
-        f"We look forward to speaking with you!"
+        f"Scheduled Time: {start_fmt}\n"
+        f"Meeting Link: {meeting_url or 'See the Cal.com calendar invitation'}\n\n"
+        "We look forward to speaking with you!"
     )
     send_email_dispatch(user_email, "Booking Confirmed: Call Scheduled with Aanandi TechnoSoft", client_body)
 
-    # Send notification to internal sales/technical team
-    team_email = os.getenv("TECH_TEAM_EMAIL", "asmiupadhyay491@gmail.com") if payload.tier == "project" else os.getenv("RECEPTIONIST_EMAIL", "pyashkumar0312@gmail.com")
+    team_email = (
+        os.getenv("TECH_TEAM_EMAIL", "asmiupadhyay491@gmail.com")
+        if payload.tier == "project"
+        else os.getenv("RECEPTIONIST_EMAIL", "pyashkumar0312@gmail.com")
+    )
     team_body = (
-        f"New Booking Confirmed!\n\n"
+        "New Booking Confirmed!\n\n"
         f"Lead Name: {user_name}\n"
         f"Lead Email: {user_email}\n"
         f"Session ID: {payload.session_id}\n"
         f"Tier: {payload.tier or 'enquiry'}\n"
         f"Scheduled Time: {start_fmt}\n"
-        f"Google Meet: {meeting_url}\n"
+        f"Cal.com Booking ID: {booking_data['id']}\n"
+        f"Meeting Link: {meeting_url or 'See the Cal.com calendar invitation'}\n"
     )
     send_email_dispatch(team_email, f"New Confirmed Booking ({payload.tier or 'enquiry'})", team_body)
 
     return {
         "status": "confirmed",
+        "booking_id": booking_data["id"],
         "meeting_url": meeting_url,
         "email_sent_to": user_email,
-        "scheduled_time": start_fmt
+        "scheduled_time": start_fmt,
     }
 
 
