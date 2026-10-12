@@ -40,7 +40,17 @@ export default function App({ config }: AppProps) {
     sessionId,
     enabled: uiMode === 'chat',
     onMessage: (msg: Message) => {
-      setMessages((prev) => [...prev, msg]);
+      setMessages((prev) => {
+        // Filter out obsolete typing indicators when real response arrives
+        const clean = prev.filter((m) => m.content !== '__typing__');
+        const existingIdx = clean.findIndex((m) => m.id === msg.id);
+        if (existingIdx !== -1) {
+          const next = [...clean];
+          next[existingIdx] = msg;
+          return next;
+        }
+        return [...clean, msg];
+      });
       if (uiMode !== 'chat') setUnreadCount((c) => c + 1);
     },
   });
@@ -132,9 +142,6 @@ export default function App({ config }: AppProps) {
   // ── Render ────────────────────────────────────────────────────
   return (
     <>
-      {/* Always-mounted form interceptor (no visual output) */}
-      <ContactFormInterceptor onCapture={handleFormCapture} />
-
       {/* Floating crystal launcher */}
       <ChatLauncher
         uiMode={uiMode}

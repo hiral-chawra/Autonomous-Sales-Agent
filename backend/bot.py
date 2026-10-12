@@ -1,67 +1,156 @@
+import io
+import av
+import edge_tts
 import os
 import requests
 from dotenv import load_dotenv
 
+from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.processors.audio.vad_processor import VADProcessor
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
-from pipecat.services.google.llm import GoogleLLMService
-from pipecat.services.google.tts import GoogleTTSService
 from pipecat.services.whisper.stt import WhisperSTTService
+from pipecat.services.tts_service import TTSService
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.processors.aggregators.llm_context import LLMContext
 
+from pipecat.serializers.base_serializer import FrameSerializer
+from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame, TTSStartedFrame, TTSStoppedFrame, TTSAudioRawFrame
+
 load_dotenv()
 
-async def book_meeting(function_name, tool_call_id, args, llm, context, result_callback):
-    """Triggers the Cal.com API v2 to book an appointment."""
-    url = "https://api.cal.com/v2/bookings"
-    payload = {
-        "start": args.get("start_time"),
-        "eventTypeId": int(os.getenv("CAL_EVENT_TYPE_ID", "7297448")),
-        "attendee": {
-            "name": args.get("name", "Valued Client"),
-            "email": args.get("email", "client@example.com"),
-            "timeZone": "Asia/Kolkata",
-            "language": "en"
-        }
-    }
-    api_key = os.getenv("CAL_API_KEY") or os.getenv("CAL_COM_API_KEY", "")
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "cal-api-version": "2024-08-13",
-        "Content-Type": "application/json"
-    }
+class RawPCMFrameSerializer(FrameSerializer):
+    def __init__(self, sample_rate: int = 16000, num_channels: int = 1):
+        super().__init__()
+        self.sample_rate = sample_rate
+        self.num_channels = num_channels
 
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
-        if response.status_code in (200, 201):
-            await result_callback({"status": "success", "message": "Meeting successfully scheduled."})
-        else:
-            await result_callback({"status": "error", "message": "Slot unavailable. Please choose another time."})
-    except Exception as e:
-        await result_callback({"status": "error", "message": str(e)})
+    async def serialize(self, frame: Frame) -> str | bytes | None:
+        if isinstance(frame, OutputAudioRawFrame):
+            return frame.audio
+        return None
 
-async def run_voice_agent(transport):
-    stt = WhisperSTTService(model="base")
-    tts = GoogleTTSService(api_key=os.getenv("GEMINI_API_KEY", ""), voice_id="en-IN-Wavenet-A")
-    llm = GoogleLLMService(api_key=os.getenv("GEMINI_API_KEY", ""), model="gemini-1.5-flash")
-
-    llm.register_function("book_meeting", book_meeting)
-
-    context = LLMContext(
-        messages=[{
-            "role": "system",
-            "content": (
-                "You are Aanandi, an AI sales engineer for Aanandi TechnoSoft. Keep answers brief (1-2 sentences). "
-                "Help qualify leads and book software demos."
+    async def deserialize(self, data: str | bytes) -> Frame | None:
+        if isinstance(data, bytes):
+            return InputAudioRawFrame(
+                audio=data,
+                sample_rate=self.sample_rate,
+                num_channels=self.num_channels
             )
-        }]
-    )
+        return None
+
+
+class EdgeTTSService(TTSService):
+    """High-quality streaming Neural TTS service using EdgeTTS and PyAV for 16kHz PCM audio."""
+    def __init__(self, voice: str = "en-IN-NeerjaNeural", sample_rate: int = 16000, **kwargs):
+        super().__init__(sample_rate=sample_rate, **kwargs)
+        self._voice = voice
+
+    async def run_tts(self, text: str, *args, **kwargs):
+        try:
+            yield TTSStartedFrame()
+            communicate = edge_tts.Communicate(text, self._voice)
+            mp3_bytes = b""
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    mp3_bytes += chunk["data"]
+
+            if not mp3_bytes:
+                yield TTSStoppedFrame()
+                return
+
+            container = av.open(io.BytesIO(mp3_bytes))
+            resampler = av.AudioResampler(format="s16", layout="mono", rate=self.sample_rate)
+
+            # 3,200 bytes = 100ms chunks at 16kHz 16-bit mono (ultra-smooth streaming)
+            chunk_size = 3200
+            buffer = bytearray()
+
+            for frame in container.decode(audio=0):
+                resampled_frames = resampler.resample(frame)
+                for rf in resampled_frames:
+                    buffer.extend(bytes(rf.planes[0]))
+                    while len(buffer) >= chunk_size:
+                        raw_chunk = bytes(buffer[:chunk_size])
+                        del buffer[:chunk_size]
+                        yield TTSAudioRawFrame(
+                            audio=raw_chunk,
+                            sample_rate=self.sample_rate,
+                            num_channels=1
+                        )
+
+            # Flush any remaining frames from the resampler
+            for rf in resampler.resample(None):
+                buffer.extend(bytes(rf.planes[0]))
+
+            if len(buffer) > 0:
+                yield TTSAudioRawFrame(
+                    audio=bytes(buffer),
+                    sample_rate=self.sample_rate,
+                    num_channels=1
+                )
+            yield TTSStoppedFrame()
+        except Exception as e:
+            print(f"[EdgeTTS] Error rendering voice: {e}")
+            yield TTSStoppedFrame()
+
+
+
+# Pre-initialize STT model
+stt = WhisperSTTService(settings=WhisperSTTService.Settings(model="tiny"))
+
+async def run_voice_agent(transport, chat_history: list = None):
+    openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
+    gemini_key = os.getenv("GEMINI_API_KEY", "")
+
+    # 1. Initialize LLM with automatic working key selection
+    if gemini_key and gemini_key.startswith("AIzaSy"):
+        from pipecat.services.google.llm import GoogleLLMService, GoogleLLMSettings
+        llm = GoogleLLMService(
+            api_key=gemini_key,
+            settings=GoogleLLMSettings(model="gemini-1.5-flash")
+        )
+    else:
+        from pipecat.services.openai.llm import OpenAILLMService
+        llm = OpenAILLMService(
+            api_key=openrouter_key,
+            base_url="https://openrouter.ai/api/v1",
+            settings=OpenAILLMService.Settings(model="openai/gpt-4o-mini")
+        )
+
+    # 2. Resilient Neural Voice Synthesis (EdgeTTS) & VAD Processor
+    tts = EdgeTTSService(voice="en-IN-NeerjaNeural", sample_rate=16000)
+    
+    # Configure VAD to detect end-of-speech faster (0.4s pause instead of ~1s)
+    vad_analyzer = SileroVADAnalyzer(params=VADParams(stop_secs=0.4))
+    vad_processor = VADProcessor(vad_analyzer=vad_analyzer)
+
+    # 3. Build memory context combining System Prompt + Previous Chat History
+    base_messages = [{
+        "role": "system",
+        "content": (
+            "You are Aanandi, an AI sales engineer for Aanandi TechnoSoft. "
+            "You are now on a live voice call with the user, transitioning from a text chat. "
+            "DO NOT ask to book a calendar slot, as they are already speaking with you directly. "
+            "Review the chat history, greet them by name if known, and ask follow-up questions "
+            "about their project requirements or enterprise needs. Keep answers conversational and brief (1-2 sentences)."
+        )
+    }]
+
+    # Inject history from text chat session if available
+    if chat_history:
+        base_messages.extend(chat_history)
+    else:
+        base_messages.append({"role": "assistant", "content": "Hello! I'm Aanandi. How can I help you with your project today?"})
+
+    context = LLMContext(messages=base_messages)
     context_aggregator = LLMContextAggregatorPair(context)
 
     pipeline = Pipeline([
         transport.input(),
+        vad_processor,
         stt,
         context_aggregator.user(),
         llm,
@@ -70,6 +159,6 @@ async def run_voice_agent(transport):
         context_aggregator.assistant()
     ])
 
-    task = PipelineTask(pipeline, PipelineParams())
+    task = PipelineTask(pipeline, params=PipelineParams())
     runner = PipelineRunner()
     await runner.run(task)

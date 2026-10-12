@@ -81,6 +81,7 @@ export function useAudioWebSocket({
   const gainNodeRef = useRef<GainNode | null>(null); // mic gain for mute
   const outputGainRef = useRef<GainNode | null>(null);
   const playbackQueueRef = useRef<AudioBuffer[]>([]);
+  const nextStartTimeRef = useRef<number>(0);
   const isPlayingRef = useRef(false);
   const isMutedRef = useRef(false);
 
@@ -103,8 +104,11 @@ export function useAudioWebSocket({
         if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
         streamRef.current = stream;
 
-        // 2. Create AudioContext at 16kHz
+        // 2. Create AudioContext at 16kHz & ensure it is active
         const ctx = new AudioContext({ sampleRate: 16000 });
+        if (ctx.state === 'suspended') {
+          await ctx.resume();
+        }
         audioCtxRef.current = ctx;
 
         // 3. Mic source → gain (for mute) → analyser → worklet
@@ -157,10 +161,12 @@ export function useAudioWebSocket({
           const scriptNode = ctx.createScriptProcessor(bufferSize, 1, 1);
           scriptNode.onaudioprocess = (ev) => {
             const input = ev.inputBuffer.getChannelData(0);
+            const output = ev.outputBuffer.getChannelData(0);
             const pcm = new Int16Array(input.length);
             for (let i = 0; i < input.length; i++) {
               const s = Math.max(-1, Math.min(1, input[i]));
               pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+              output[i] = 0; // Prevent echo!
             }
             onPCMChunk(pcm.buffer);
           };
@@ -213,12 +219,19 @@ export function useAudioWebSocket({
               }
             } catch { /* ignore */ }
           } else if (ev.data instanceof ArrayBuffer && ev.data.byteLength > 0) {
-            // Binary PCM audio from Edge TTS
-            const pcm16 = new Int16Array(ev.data);
-            const float32 = new Float32Array(pcm16.length);
-            for (let i = 0; i < pcm16.length; i++) {
-              float32[i] = pcm16[i] / 32768;
+            // Binary PCM audio from Edge TTS / Pipecat
+            // Fix: Use DataView to explicitly read Little-Endian 16-bit PCM integers
+            // Using Int16Array directly can cause severe static/hissing if network byte order 
+            // is misinterpreted or platform native endianness doesn't match the stream.
+            const view = new DataView(ev.data);
+            const numSamples = Math.floor(ev.data.byteLength / 2);
+            const float32 = new Float32Array(numSamples);
+            
+            for (let i = 0; i < numSamples; i++) {
+              // true = Little-Endian. Divide by 32768 to normalize to Web Audio API's expected [-1.0, 1.0] range
+              float32[i] = view.getInt16(i * 2, true) / 32768; 
             }
+            
             const audioBuffer = ctx.createBuffer(1, float32.length, 16000);
             audioBuffer.copyToChannel(float32, 0);
             playbackQueueRef.current.push(audioBuffer);
@@ -239,29 +252,28 @@ export function useAudioWebSocket({
     };
   }, [apiBase, sessionId]);
 
-  // ── Playback queue drain ──────────────────────────────────────────
+  // ── Playback queue drain (Sample-accurate timeline scheduling) ────
   const drainPlaybackQueue = (ctx: AudioContext) => {
-    if (isPlayingRef.current) return;
-    playNext(ctx);
-  };
+    while (playbackQueueRef.current.length > 0) {
+      const buffer = playbackQueueRef.current.shift();
+      if (!buffer) break;
 
-  const playNext = (ctx: AudioContext) => {
-    const buffer = playbackQueueRef.current.shift();
-    if (!buffer) {
-      isPlayingRef.current = false;
-      return;
-    }
-    isPlayingRef.current = true;
+      const node = ctx.createBufferSource();
+      node.buffer = buffer;
+      if (outputGainRef.current) {
+        node.connect(outputGainRef.current);
+      } else {
+        node.connect(ctx.destination);
+      }
 
-    const node = ctx.createBufferSource();
-    node.buffer = buffer;
-    if (outputGainRef.current) {
-      node.connect(outputGainRef.current);
-    } else {
-      node.connect(ctx.destination);
+      const now = ctx.currentTime;
+      if (nextStartTimeRef.current < now) {
+        nextStartTimeRef.current = now + 0.02; // Small 20ms jitter buffer
+      }
+
+      node.start(nextStartTimeRef.current);
+      nextStartTimeRef.current += buffer.duration;
     }
-    node.onended = () => playNext(ctx);
-    node.start();
   };
 
   // ── Teardown ──────────────────────────────────────────────────────
@@ -273,6 +285,7 @@ export function useAudioWebSocket({
     audioCtxRef.current?.close();
     audioCtxRef.current = null;
     playbackQueueRef.current = [];
+    nextStartTimeRef.current = 0;
     isPlayingRef.current = false;
   };
 

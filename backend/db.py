@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
-client = AsyncIOMotorClient(MONGODB_URL)
+client = AsyncIOMotorClient(MONGODB_URL, serverSelectionTimeoutMS=2000)
 db = client[os.getenv("MONGODB_DB_NAME", "aanandi_sales")]
 
 # Database Collections
@@ -16,16 +16,20 @@ conversations_collection = db["conversations"]
 payment_transactions_collection = db["payment_transactions"]
 booking_records_collection = db["booking_records"]
 
+# In-memory fallback for when MongoDB is offline
+_in_memory_otps: Dict[str, Any] = {}
+
 # ── OTP & Lead Helpers ────────────────────────────────────────────────────────
 async def store_lead_otp(email: str, otp_code: str, expiry_minutes: int = 10, session_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    Stores a 6-digit OTP and its expiration timestamp in the leads document.
+    Stores a 6-digit OTP and its expiration timestamp in the leads document or in-memory fallback.
     """
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=expiry_minutes)
+    clean_email = email.strip().lower()
     
     update_data = {
-        "email": email.strip().lower(),
+        "email": clean_email,
         "otp_code": str(otp_code),
         "otp_expires_at": expires_at,
         "is_verified": False,
@@ -33,39 +37,55 @@ async def store_lead_otp(email: str, otp_code: str, expiry_minutes: int = 10, se
     }
     if session_id:
         update_data["session_id"] = session_id
-        
-    result = await leads_collection.find_one_and_update(
-        {"email": email.strip().lower()},
-        {"$set": update_data},
-        upsert=True,
-        return_document=True
-    )
-    return result
+
+    _in_memory_otps[clean_email] = update_data
+
+    try:
+        result = await leads_collection.find_one_and_update(
+            {"email": clean_email},
+            {"$set": update_data},
+            upsert=True,
+            return_document=True
+        )
+        return result or update_data
+    except Exception as e:
+        print(f"[DB NOTICE] MongoDB unavailable ({e}), using in-memory OTP storage.")
+        return update_data
 
 async def verify_lead_otp(email: str, otp_code: str) -> bool:
     """
-    Verifies the OTP code against MongoDB for the given lead.
+    Verifies the OTP code against MongoDB or in-memory storage.
     If valid and not expired, sets is_verified to True.
     """
     now = datetime.now(timezone.utc)
-    lead = await leads_collection.find_one({"email": email.strip().lower()})
-    
-    if not lead:
-        return False
-        
-    stored_otp = lead.get("otp_code")
-    expires_at = lead.get("otp_expires_at")
-    
-    # Ensure datetime object is timezone aware if needed
-    if expires_at and expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-        
-    if stored_otp == str(otp_code) and expires_at and expires_at > now:
-        await leads_collection.update_one(
-            {"_id": lead["_id"]},
-            {"$set": {"is_verified": True, "otp_code": None, "updated_at": now}}
-        )
-        return True
+    clean_email = email.strip().lower()
+
+    # 1. Try Mongo DB
+    try:
+        lead = await leads_collection.find_one({"email": clean_email})
+        if lead:
+            stored_otp = lead.get("otp_code")
+            expires_at = lead.get("otp_expires_at")
+            if expires_at and expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+                
+            if stored_otp == str(otp_code) and expires_at and expires_at > now:
+                await leads_collection.update_one(
+                    {"_id": lead["_id"]},
+                    {"$set": {"is_verified": True, "otp_code": None, "updated_at": now}}
+                )
+                return True
+    except Exception:
+        pass
+
+    # 2. Try In-Memory Fallback
+    memory_data = _in_memory_otps.get(clean_email)
+    if memory_data:
+        stored_otp = memory_data.get("otp_code")
+        expires_at = memory_data.get("otp_expires_at")
+        if stored_otp == str(otp_code) and expires_at and expires_at > now:
+            memory_data["is_verified"] = True
+            return True
         
     return False
 
