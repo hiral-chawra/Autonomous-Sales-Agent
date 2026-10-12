@@ -661,6 +661,7 @@ function CalendarCard({
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
   const [bookingUrl, setBookingUrl] = useState<string>('');
   const [weekOffset, setWeekOffset] = useState(0);
+  const [retryCount, setRetryCount] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
 
   useEffect(() => {
@@ -669,18 +670,22 @@ function CalendarCard({
         const res = await fetch(
           `${apiBase}/api/v1/scheduling/availability?session_id=${sessionId}&week_offset=${weekOffset}`
         );
-        if (!res.ok) throw new Error('Failed to fetch');
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(errorData.detail || 'Could not load live Cal.com availability.');
+        }
         const data: { slots: TimeSlot[] } = await res.json();
         setSlots(data.slots.filter((s) => s.available));
         setState('picking');
-      } catch {
-        setSlots(generateDemoSlots());
-        setState('picking');
+      } catch (error) {
+        setSlots([]);
+        setErrorMsg(error instanceof Error ? error.message : 'Could not load live Cal.com availability.');
+        setState('error');
       }
     };
     setState('loading');
     load();
-  }, [apiBase, sessionId, weekOffset]);
+  }, [apiBase, sessionId, weekOffset, retryCount]);
 
   const handleBook = async () => {
     if (!selectedSlot) return;
@@ -697,8 +702,10 @@ function CalendarCard({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error('Booking failed');
       const data = await res.json();
+      if (!res.ok || data.status !== 'confirmed') {
+        throw new Error(data.detail || 'Cal.com could not confirm the booking.');
+      }
       setBookingUrl(data.meeting_url ?? '#');
       setState('booked');
     } catch (e: unknown) {
@@ -762,23 +769,22 @@ function CalendarCard({
 
   if (state === 'error') {
     return (
-      <CardShell title="Schedule a Demo" icon={<AlertCircle size={14} color="#EF4444" />}>
-        <p style={{ fontSize: '12px', color: '#EF4444', textAlign: 'center' }}>{errorMsg}</p>
+      <CardShell title="Calendar Unavailable" icon={<AlertCircle size={14} color="#EF4444" />}>
+        <p style={{ fontSize: '12px', color: '#DBD7FA', textAlign: 'center' }}>{errorMsg}</p>
         <button
-          onClick={() => setState('picking')}
+          onClick={() => setRetryCount((count) => count + 1)}
           style={{
-            marginTop: '8px',
             width: '100%',
-            padding: '8px',
-            borderRadius: '8px',
-            background: 'rgba(149,145,244,0.15)',
-            border: '1px solid rgba(149,145,244,0.3)',
-            color: '#9591F4',
-            fontSize: '12px',
+            padding: '9px',
+            borderRadius: '10px',
+            background: 'rgba(149,145,244,0.12)',
+            border: '1px solid rgba(149,145,244,0.25)',
+            color: '#DBD7FA',
             cursor: 'pointer',
+            fontWeight: 700,
           }}
         >
-          Try again
+          Retry
         </button>
       </CardShell>
     );
@@ -1165,21 +1171,4 @@ function CardShell({
       {children}
     </div>
   );
-}
-
-function generateDemoSlots(): TimeSlot[] {
-  const slots: TimeSlot[] = [];
-  const now = new Date();
-  for (let d = 1; d <= 5; d++) {
-    for (const h of [9, 11, 14, 16]) {
-      const start = new Date(now);
-      start.setDate(now.getDate() + d);
-      start.setHours(h, 0, 0, 0);
-      const end = new Date(start);
-      end.setMinutes(30);
-      if (d === 1 && h < now.getHours() + 2) continue;
-      slots.push({ start: start.toISOString(), end: end.toISOString(), available: true });
-    }
-  }
-  return slots;
 }
