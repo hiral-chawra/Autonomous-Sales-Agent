@@ -6,7 +6,6 @@ import requests
 from dotenv import load_dotenv
 
 from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
-from pipecat.processors.aggregators.sentence import SentenceAggregator
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.audio.vad_processor import VADProcessor
@@ -67,7 +66,7 @@ class EdgeTTSService(TTSService):
             resampler = av.AudioResampler(format="s16", layout="mono", rate=self.sample_rate)
 
             # 3,200 bytes = 100ms chunks at 16kHz 16-bit mono (ultra-smooth streaming)
-            chunk_size = 16000
+            chunk_size = 3200
             buffer = bytearray()
 
             for frame in container.decode(audio=0):
@@ -122,8 +121,12 @@ async def run_voice_agent(transport, chat_history: list = None):
             settings=OpenAILLMService.Settings(model="openai/gpt-4o-mini")
         )
 
-    # 2. Resilient Neural Voice Synthesis (EdgeTTS) & VAD Processor
-    tts = EdgeTTSService(voice="en-IN-NeerjaNeural", sample_rate=16000)
+    # 2. Resilient Neural Voice Synthesis (EdgeTTS) with Markdown filtering & VAD Processor
+    tts = EdgeTTSService(
+        voice="en-IN-NeerjaNeural",
+        sample_rate=16000,
+        text_filters=[MarkdownTextFilter()]
+    )
     
     # Configure VAD to detect end-of-speech faster (0.4s pause instead of ~1s)
     vad_analyzer = SileroVADAnalyzer(params=VADParams(stop_secs=0.4))
@@ -151,19 +154,13 @@ async def run_voice_agent(transport, chat_history: list = None):
     context = LLMContext(messages=base_messages)
     context_aggregator = LLMContextAggregatorPair(context)
 
-    # Initialize the new text filters here
-    markdown_filter = MarkdownTextFilter()
-    sentence_aggregator = SentenceAggregator()
-
-    # 2. Add them into the Pipeline list right between 'llm' and 'tts'
+    # 4. Pipeline consisting of FrameProcessors
     pipeline = Pipeline([
         transport.input(),
         vad_processor,
         stt,
         context_aggregator.user(),
         llm,
-        markdown_filter,      # <-- Strips asterisks and markdown symbols
-        sentence_aggregator,  # <-- Waits for a full sentence before sending audio
         tts,
         transport.output(),
         context_aggregator.assistant()
