@@ -5,6 +5,8 @@ import os
 import requests
 from dotenv import load_dotenv
 
+from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
+from pipecat.processors.aggregators.sentence import SentenceAggregator
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.processors.audio.vad_processor import VADProcessor
@@ -65,7 +67,7 @@ class EdgeTTSService(TTSService):
             resampler = av.AudioResampler(format="s16", layout="mono", rate=self.sample_rate)
 
             # 3,200 bytes = 100ms chunks at 16kHz 16-bit mono (ultra-smooth streaming)
-            chunk_size = 3200
+            chunk_size = 16000
             buffer = bytearray()
 
             for frame in container.decode(audio=0):
@@ -105,7 +107,7 @@ async def run_voice_agent(transport, chat_history: list = None):
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
     gemini_key = os.getenv("GEMINI_API_KEY", "")
 
-    # 1. Initialize LLM with automatic working key selection
+    #  Initialize LLM with automatic working key selection
     if gemini_key and gemini_key.startswith("AIzaSy"):
         from pipecat.services.google.llm import GoogleLLMService, GoogleLLMSettings
         llm = GoogleLLMService(
@@ -135,7 +137,8 @@ async def run_voice_agent(transport, chat_history: list = None):
             "You are now on a live voice call with the user, transitioning from a text chat. "
             "DO NOT ask to book a calendar slot, as they are already speaking with you directly. "
             "Review the chat history, greet them by name if known, and ask follow-up questions "
-            "about their project requirements or enterprise needs. Keep answers conversational and brief (1-2 sentences)."
+            "about their project requirements or enterprise needs. Keep answers conversational and brief (1-2 sentences). "
+            "IMPORTANT: Do not use any markdown formatting (no asterisks, no bolding, no bullet points) as your text will be read aloud." 
         )
     }]
 
@@ -148,12 +151,19 @@ async def run_voice_agent(transport, chat_history: list = None):
     context = LLMContext(messages=base_messages)
     context_aggregator = LLMContextAggregatorPair(context)
 
+    # Initialize the new text filters here
+    markdown_filter = MarkdownTextFilter()
+    sentence_aggregator = SentenceAggregator()
+
+    # 2. Add them into the Pipeline list right between 'llm' and 'tts'
     pipeline = Pipeline([
         transport.input(),
         vad_processor,
         stt,
         context_aggregator.user(),
         llm,
+        markdown_filter,      # <-- Strips asterisks and markdown symbols
+        sentence_aggregator,  # <-- Waits for a full sentence before sending audio
         tts,
         transport.output(),
         context_aggregator.assistant()
