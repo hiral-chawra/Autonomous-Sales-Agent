@@ -833,7 +833,7 @@ function CallRoutingCard({
 /* ══════════════════════════════════════════════════════════════════════
    5. CALENDAR CARD (Slot Picker - Pick Slot BEFORE Payment)
 ══════════════════════════════════════════════════════════════════════ */
-type CalendarState = 'loading' | 'picking' | 'error';
+type CalendarState = 'loading' | 'picking' | 'confirming' | 'booked' | 'error';
 
 function CalendarCard({
   sessionId,
@@ -853,6 +853,7 @@ function CalendarCard({
   const [state, setState] = useState<CalendarState>('loading');
   const [slots, setSlots] = useState<TimeSlot[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
+  const [bookingUrl, setBookingUrl] = useState('');
   const [weekOffset, setWeekOffset] = useState(0);
   const [retryCount, setRetryCount] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
@@ -882,10 +883,34 @@ function CalendarCard({
     load();
   }, [apiBase, sessionId, weekOffset, retryCount]);
 
-  const handleProceedToPayment = () => {
+  const handleProceedToPayment = async () => {
     if (!selectedSlot) return;
     if (onSlotConfirmed) {
       onSlotConfirmed(selectedSlot);
+      return;
+    }
+    setState('confirming');
+    try {
+      const payload: BookingPayload = {
+        slot_start: selectedSlot.start,
+        slot_end: selectedSlot.end,
+        lead_id: leadId ?? 'anonymous',
+        session_id: sessionId,
+      };
+      const res = await fetch(`${apiBase}/api/v1/scheduling/book`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok || data.status !== 'confirmed') {
+        throw new Error(data.detail || 'Cal.com could not confirm the booking.');
+      }
+      setBookingUrl(data.meeting_url ?? '#');
+      setState('booked');
+    } catch (e: unknown) {
+      setErrorMsg(e instanceof Error ? e.message : 'Unknown error');
+      setState('error');
     }
   };
 
@@ -903,6 +928,40 @@ function CalendarCard({
             }}
             className="animate-spin"
           />
+        </div>
+      </CardShell>
+    );
+  }
+
+  if (state === 'booked') {
+    return (
+      <CardShell title="Booking Confirmed!" icon={<CheckCircle size={14} color="#22C55E" />}>
+        <div style={{ textAlign: 'center', padding: '8px 0' }}>
+          <div style={{ fontSize: '32px', marginBottom: '8px' }}>🎉</div>
+          <p style={{ fontSize: '12px', color: '#DBD7FA', marginBottom: '10px', lineHeight: '1.5' }}>
+            Your demo is confirmed! Check your email for the calendar invite.
+          </p>
+          {bookingUrl && bookingUrl !== '#' && (
+            <a
+              href={bookingUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '7px 14px',
+                borderRadius: '8px',
+                background: 'linear-gradient(135deg, #5A5BBD, #9591F4)',
+                color: 'white',
+                fontSize: '12px',
+                fontWeight: 600,
+                textDecoration: 'none',
+              }}
+            >
+              View Meeting Link →
+            </a>
+          )}
         </div>
       </CardShell>
     );
