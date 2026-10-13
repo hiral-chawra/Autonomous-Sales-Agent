@@ -2,8 +2,10 @@ fastapi
 uvicorn
 requests
 python-dotenv
+python-multipart
 pydantic
 motor
+beanie
 razorpay
 langchain-core
 langchain

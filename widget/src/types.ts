@@ -19,6 +19,7 @@ export interface Message {
   status: 'sending' | 'delivered' | 'error';
   timestamp: Date;
   toolPayload?: ToolPayload;
+  attachments?: string[];
 }
 
 export type ToolPayloadType =

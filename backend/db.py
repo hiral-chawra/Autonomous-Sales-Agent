@@ -10,11 +10,24 @@ MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
 client = AsyncIOMotorClient(MONGODB_URL, serverSelectionTimeoutMS=2000)
 db = client[os.getenv("MONGODB_DB_NAME", "aanandi_sales")]
 
-# Database Collections
+# Database Collections (All 7 Core Collections)
 leads_collection = db["leads"]
 conversations_collection = db["conversations"]
 payment_transactions_collection = db["payment_transactions"]
 booking_records_collection = db["booking_records"]
+follow_up_queue_collection = db["follow_up_queue"]
+call_logs_collection = db["call_logs"]
+knowledge_chunks_collection = db["knowledge_chunks"]
+
+async def init_db():
+    """Initializes Beanie ODM with all 7 document models."""
+    try:
+        from models import ALL_DOCUMENT_MODELS
+        from beanie import init_beanie
+        await init_beanie(database=db, document_models=ALL_DOCUMENT_MODELS)
+        print("[DB SUCCESS] Beanie ODM initialized successfully.")
+    except Exception as e:
+        print(f"[DB NOTICE] Beanie initialization notice: {e}")
 
 # In-memory fallback for when MongoDB is offline
 _in_memory_otps: Dict[str, Any] = {}
@@ -165,4 +178,72 @@ async def create_booking_record(
     }
     await booking_records_collection.insert_one(doc)
     return doc
+
+# ── Lead Photo Attachment Helpers ─────────────────────────────────────────────
+async def link_lead_photo(photo_url: str, session_id: Optional[str] = None, lead_id: Optional[str] = None, email: Optional[str] = None) -> bool:
+    """
+    Links an uploaded photo URL to the lead's CRM record so AI can retrieve project requirements.
+    """
+    now = datetime.now(timezone.utc)
+    query: Dict[str, Any] = {}
+    if email:
+        query["email"] = email.strip().lower()
+    elif lead_id:
+        query["_id"] = lead_id
+    elif session_id:
+        query["session_id"] = session_id
+    else:
+        return False
+
+    try:
+        res = await leads_collection.update_one(
+            query,
+            {
+                "$addToSet": {"project_photos": photo_url},
+                "$set": {"updated_at": now}
+            },
+            upsert=True
+        )
+        return res.acknowledged
+    except Exception as e:
+        print(f"[DB ERROR] Failed to link photo: {e}")
+        return False
+
+# ── Follow-Up Queue Helpers (90-Second Trigger) ──────────────────────────────
+async def enqueue_follow_up(lead_id: str, session_id: str, delay_seconds: int = 90, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Schedules an automated engagement sweep task for a newly captured contact form lead.
+    """
+    now = datetime.now(timezone.utc)
+    scheduled_at = now + timedelta(seconds=delay_seconds)
+    doc = {
+        "lead_id": str(lead_id),
+        "session_id": str(session_id),
+        "status": "pending",
+        "action_type": "90s_engagement",
+        "scheduled_at": scheduled_at,
+        "payload": payload or {},
+        "created_at": now
+    }
+    await follow_up_queue_collection.insert_one(doc)
+    return doc
+
+async def get_due_follow_ups() -> list:
+    """Fetches all pending follow-up tasks whose scheduled time has arrived."""
+    now = datetime.now(timezone.utc)
+    cursor = follow_up_queue_collection.find({
+        "status": "pending",
+        "scheduled_at": {"$lte": now}
+    })
+    return await cursor.to_list(length=50)
+
+async def mark_follow_up_processed(task_id, status: str = "processed") -> bool:
+    """Marks a follow-up task as processed or cancelled."""
+    now = datetime.now(timezone.utc)
+    res = await follow_up_queue_collection.update_one(
+        {"_id": task_id},
+        {"$set": {"status": status, "processed_at": now}}
+    )
+    return res.modified_count > 0
+
 

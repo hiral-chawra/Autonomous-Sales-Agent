@@ -11,7 +11,7 @@ export default defineConfig({
     lib: {
       entry: 'src/index.tsx',
       name: 'AanandiWidget',
-      fileName: 'aanandi-widget',
+      fileName: () => 'widget.min.js',
       formats: ['iife'],
     },
     rollupOptions: {
@@ -19,8 +19,9 @@ export default defineConfig({
       external: [],
       output: {
         inlineDynamicImports: true,
+        entryFileNames: 'widget.min.js',
         // Inline CSS into JS so Shadow DOM can inject it
-        assetFileNames: 'aanandi-widget.[ext]',
+        assetFileNames: 'widget.[ext]',
       },
     },
     cssCodeSplit: false,

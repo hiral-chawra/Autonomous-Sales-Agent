@@ -5,11 +5,13 @@ import asyncio
 import datetime
 import razorpay
 import requests
+from contextlib import asynccontextmanager
 
 # Guarantee backend directory is in sys.path for clean module imports regardless of launch CWD
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, UploadFile, File, Form
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -17,13 +19,65 @@ from dotenv import load_dotenv
 from pipecat.transports.websocket.server import WebsocketServerTransport, WebsocketServerParams
 from bot import run_voice_agent
 from agent import app as sales_agent
-from db import leads_collection, conversations_collection
+from db import (
+    leads_collection, conversations_collection,
+    init_db, link_lead_photo, enqueue_follow_up,
+    get_due_follow_ups, mark_follow_up_processed
+)
 from dispatch import send_email_dispatch
 from langchain_core.messages import HumanMessage
 
 load_dotenv()
 
-app = FastAPI(title="Aanandi Sales API Gateway")
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+async def run_follow_up_worker():
+    """Background sweep running every 10s to process due 90-second follow-ups."""
+    while True:
+        try:
+            await asyncio.sleep(10)
+            due_tasks = await get_due_follow_ups()
+            for task in due_tasks:
+                task_id = task.get("_id")
+                lead_id = task.get("lead_id")
+                session_id = task.get("session_id")
+                payload = task.get("payload") or {}
+                user_email = payload.get("email")
+                user_name = payload.get("full_name") or "there"
+
+                # Check if user already engaged in active conversation
+                conv = await conversations_collection.find_one({"session_id": session_id})
+                if conv and len(conv.get("messages", [])) > 2:
+                    await mark_follow_up_processed(task_id, status="cancelled")
+                    continue
+
+                if user_email:
+                    body = (
+                        f"Hi {user_name},\n\n"
+                        "Thank you for submitting your project requirements on our website. "
+                        "Our AI Sales Engineer, Aanandi, is available right now to assist you with architecture, "
+                        "pricing estimates, and enterprise capabilities.\n\n"
+                        "Feel free to reply to this email, or resume your live session on our website.\n\n"
+                        "Best regards,\nAanandi TechnoSoft Enterprise Team"
+                    )
+                    send_email_dispatch(user_email, "Following up on your Aanandi inquiry", body)
+
+                await mark_follow_up_processed(task_id, status="processed")
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            print(f"[FOLLOW-UP WORKER NOTICE] {e}")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize Beanie ODM
+    await init_db()
+    worker_task = asyncio.create_task(run_follow_up_worker())
+    yield
+    worker_task.cancel()
+
+app = FastAPI(title="Aanandi Sales API Gateway", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -32,6 +86,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # ── Razorpay Setup (Mandatory) ────────────────────────────────────────
 razorpay_client = razorpay.Client(
@@ -219,7 +275,45 @@ async def intercept_lead(lead: LeadInterceptPayload):
         lead_id = str(res.upserted_id) if res.upserted_id else lead.session_id
     except Exception:
         lead_id = lead.session_id
+
+    # Enqueue 90-second automated engagement task
+    try:
+        await enqueue_follow_up(lead_id=lead_id, session_id=lead.session_id, delay_seconds=90, payload=doc)
+    except Exception as e:
+        print(f"[INTERCEPT QUEUE NOTICE] {e}")
+
     return {"status": "success", "lead_id": lead_id}
+
+# ── Project Requirements Photo Upload Endpoint ────────────────────────
+@app.post("/api/v1/upload/photo")
+async def upload_project_photo(
+    file: UploadFile = File(...),
+    session_id: str = Form(...),
+    lead_id: str | None = Form(None)
+):
+    """
+    Accepts photo attachments from prospects regarding their project requirements,
+    stores them securely, and links them to the lead's CRM record.
+    """
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image attachments (PNG, JPG, WEBP) are supported.")
+
+    file_ext = os.path.splitext(file.filename)[1] or ".png"
+    safe_name = f"{int(datetime.datetime.now().timestamp())}_{file.filename}"
+    file_path = os.path.join(UPLOAD_DIR, safe_name)
+
+    content = await file.read()
+    with open(file_path, "wb") as f:
+        f.write(content)
+
+    photo_url = f"/uploads/{safe_name}"
+    await link_lead_photo(photo_url=photo_url, session_id=session_id, lead_id=lead_id)
+
+    return {
+        "status": "success",
+        "url": photo_url,
+        "filename": file.filename
+    }
 
 # ── 2. Real-Time Chat WebSocket (LangGraph Streaming) ────────────────
 @app.websocket("/api/v1/chat/stream")
@@ -285,6 +379,37 @@ async def chat_stream_endpoint(websocket: WebSocket, session_id: str):
                             {"$set": update_fields},
                             upsert=True
                         )
+                except Exception:
+                    pass
+
+                # Persist embedded message subdocuments into conversations collection
+                try:
+                    now_dt = datetime.datetime.now(datetime.timezone.utc)
+                    attachments = data.get("attachments", [])
+                    user_subdoc = {
+                        "message_id": f"msg_{int(now_dt.timestamp())}_u",
+                        "role": "user",
+                        "content": user_text,
+                        "attachments": attachments,
+                        "timestamp": now_dt,
+                        "status": "delivered"
+                    }
+                    asst_subdoc = {
+                        "message_id": f"msg_{int(now_dt.timestamp())}_a",
+                        "role": "assistant",
+                        "content": response_content,
+                        "attachments": [],
+                        "timestamp": now_dt,
+                        "status": "delivered"
+                    }
+                    await conversations_collection.update_one(
+                        {"session_id": session_id},
+                        {
+                            "$push": {"messages": {"$each": [user_subdoc, asst_subdoc]}},
+                            "$set": {"updated_at": now_dt}
+                        },
+                        upsert=True
+                    )
                 except Exception:
                     pass
 

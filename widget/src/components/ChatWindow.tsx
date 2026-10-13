@@ -15,7 +15,7 @@ interface ChatWindowProps {
   sessionId: string;
   leadId: string | null;
   apiBase: string;
-  onSendMessage: (text: string) => Promise<void>;
+  onSendMessage: (text: string, attachments?: string[]) => Promise<void>;
   onOpenVoice: () => void;
   onClose: () => void;
 }
@@ -34,7 +34,10 @@ export default function ChatWindow({
   const [inputValue, setInputValue] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
+  const [attachedPhotos, setAttachedPhotos] = useState<string[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-grow textarea
   useEffect(() => {
@@ -49,13 +52,48 @@ export default function ChatWindow({
     setTimeout(() => textareaRef.current?.focus(), 100);
   }, []);
 
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    setIsUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('session_id', sessionId);
+      if (leadId) formData.append('lead_id', leadId);
+
+      const res = await fetch(`${apiBase}/api/v1/upload/photo`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.url) {
+          setAttachedPhotos((prev) => [...prev, data.url]);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to upload photo attachment:', err);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const removePhoto = (index: number) => {
+    setAttachedPhotos((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const handleSend = async () => {
     const text = inputValue.trim();
-    if (!text || isSending) return;
+    const photos = [...attachedPhotos];
+    if ((!text && photos.length === 0) || isSending || isUploading) return;
     setInputValue('');
+    setAttachedPhotos([]);
     setIsSending(true);
     try {
-      await onSendMessage(text);
+      await onSendMessage(text, photos);
     } finally {
       setIsSending(false);
       textareaRef.current?.focus();
@@ -269,6 +307,95 @@ export default function ChatWindow({
                 flexShrink: 0,
               }}
             >
+              {/* Photo preview strip */}
+              {(attachedPhotos.length > 0 || isUploading) && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    marginBottom: '8px',
+                    padding: '6px 10px',
+                    background: 'rgba(0,0,0,0.35)',
+                    borderRadius: '10px',
+                    border: '1px solid rgba(149,145,244,0.25)',
+                    overflowX: 'auto',
+                  }}
+                >
+                  {attachedPhotos.map((url, i) => (
+                    <div
+                      key={url + i}
+                      style={{
+                        position: 'relative',
+                        width: '42px',
+                        height: '42px',
+                        borderRadius: '6px',
+                        overflow: 'hidden',
+                        border: '1px solid rgba(149,145,244,0.4)',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <img
+                        src={url.startsWith('/') ? `${apiBase}${url}` : url}
+                        alt="attachment"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                      <button
+                        onClick={() => removePhoto(i)}
+                        title="Remove attachment"
+                        style={{
+                          position: 'absolute',
+                          top: '2px',
+                          right: '2px',
+                          width: '14px',
+                          height: '14px',
+                          borderRadius: '50%',
+                          background: 'rgba(0,0,0,0.7)',
+                          color: 'white',
+                          border: 'none',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '10px',
+                          lineHeight: 1,
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  {isUploading && (
+                    <div
+                      style={{
+                        width: '42px',
+                        height: '42px',
+                        borderRadius: '6px',
+                        background: 'rgba(149,145,244,0.1)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: '14px',
+                          height: '14px',
+                          border: '2px solid rgba(149,145,244,0.3)',
+                          borderTopColor: '#9591F4',
+                          borderRadius: '50%',
+                        }}
+                        className="animate-spin"
+                      />
+                    </div>
+                  )}
+                  <span style={{ fontSize: '11px', color: '#DBD7FA' }}>
+                    {isUploading ? 'Uploading project photo…' : `${attachedPhotos.length} photo attached`}
+                  </span>
+                </div>
+              )}
+
               <div
                 style={{
                   display: 'flex',
@@ -313,6 +440,36 @@ export default function ChatWindow({
                   }}
                 />
 
+                {/* Photo attachment input & button */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  style={{ display: 'none' }}
+                  onChange={handleFileSelect}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isUploading}
+                  title="Attach project photo"
+                  style={{
+                    flexShrink: 0,
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '9px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'rgba(149,145,244,0.1)',
+                    border: '1px solid rgba(149,145,244,0.2)',
+                    cursor: 'pointer',
+                    color: '#9591F4',
+                    transition: 'all 0.2s',
+                  }}
+                >
+                  <PaperclipIcon />
+                </button>
+
                 {/* Mic → voice */}
                 <button
                   onClick={onOpenVoice}
@@ -338,7 +495,7 @@ export default function ChatWindow({
                 {/* Send */}
                 <button
                   onClick={handleSend}
-                  disabled={!inputValue.trim() || isSending}
+                  disabled={(!inputValue.trim() && attachedPhotos.length === 0) || isSending || isUploading}
                   style={{
                     flexShrink: 0,
                     width: '32px',
@@ -348,20 +505,20 @@ export default function ChatWindow({
                     alignItems: 'center',
                     justifyContent: 'center',
                     background:
-                      inputValue.trim() && !isSending
+                      (inputValue.trim() || attachedPhotos.length > 0) && !isSending && !isUploading
                         ? 'linear-gradient(135deg, #5A5BBD, #9591F4)'
                         : 'rgba(90,91,189,0.15)',
                     border: 'none',
-                    cursor: inputValue.trim() && !isSending ? 'pointer' : 'default',
-                    color: inputValue.trim() && !isSending ? 'white' : 'rgba(149,145,244,0.4)',
+                    cursor: (inputValue.trim() || attachedPhotos.length > 0) && !isSending ? 'pointer' : 'default',
+                    color: (inputValue.trim() || attachedPhotos.length > 0) && !isSending ? 'white' : 'rgba(149,145,244,0.4)',
                     transition: 'all 0.2s',
                     boxShadow:
-                      inputValue.trim() && !isSending
+                      (inputValue.trim() || attachedPhotos.length > 0) && !isSending
                         ? '0 2px 8px rgba(90,91,189,0.4)'
                         : 'none',
                   }}
                 >
-                  {isSending ? (
+                  {isSending || isUploading ? (
                     <div
                       style={{
                         width: '14px',
@@ -399,6 +556,14 @@ export default function ChatWindow({
 }
 
 /* ── Inline SVG Icons ─────────────────────────────────────────────── */
+function PaperclipIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  );
+}
+
 function MicIcon() {
   return (
     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

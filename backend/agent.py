@@ -56,11 +56,25 @@ PROJECTS_AND_CASE_STUDIES = """Aanandi TechnoSoft has successfully designed, dev
 # Tools Definition
 @tool
 def query_knowledge_base(query: str) -> str:
-    """Searches product documentation, case studies, fields, and enterprise FAQs for Aanandi TechnoSoft."""
-    q_lower = query.lower()
-    if any(k in q_lower for k in ["project", "projects", "fildes", "field", "fields", "built", "made", "work", "worked", "portfolio", "case", "study", "studies", "industry", "sector"]):
+    """Searches product documentation, case studies, fields, and enterprise FAQs for Aanandi TechnoSoft via Atlas Vector Search."""
+    try:
+        from rag import vector_search_knowledge
+        import asyncio
+        import concurrent.futures
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                return pool.submit(asyncio.run, vector_search_knowledge(query)).result()
+        else:
+            return asyncio.run(vector_search_knowledge(query))
+    except Exception as e:
+        print(f"[RAG SEARCH NOTICE] Fallback due to: {e}")
         return PROJECTS_AND_CASE_STUDIES
-    return f"Aanandi TechnoSoft builds custom enterprise AI agents, workflow automation, real-time voice bots, and CRM integrations with 99.99% SLA and dedicated engineering support.\n\nKey Projects & Solutions:\n{PROJECTS_AND_CASE_STUDIES}"
 
 @tool
 def generate_booking_link(email: str, name: str) -> str:

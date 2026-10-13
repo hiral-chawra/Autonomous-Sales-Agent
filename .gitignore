@@ -23,6 +23,7 @@ __pycache__/
 dist/
 out/
 build/
+backend/uploads/
 
 # IDE and Editor files
 .vscode/

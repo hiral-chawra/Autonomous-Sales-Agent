@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 const SESSION_KEY = 'aanandi_session_id';
 const LEAD_KEY    = 'aanandi_lead_id';
@@ -8,47 +8,73 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function getOrCreate(key: string): string {
+function getCrossTab(key: string): string | null {
   try {
-    const existing = sessionStorage.getItem(key);
-    if (existing) return existing;
+    return localStorage.getItem(key) || sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function getOrCreateSessionId(): string {
+  try {
+    const existing = localStorage.getItem(SESSION_KEY) || sessionStorage.getItem(SESSION_KEY);
+    if (existing) {
+      sessionStorage.setItem(SESSION_KEY, existing);
+      localStorage.setItem(SESSION_KEY, existing);
+      return existing;
+    }
     const fresh = generateId();
-    sessionStorage.setItem(key, fresh);
+    sessionStorage.setItem(SESSION_KEY, fresh);
+    localStorage.setItem(SESSION_KEY, fresh);
     return fresh;
   } catch {
-    // Private browsing fallback
     return generateId();
   }
 }
 
-function persist(key: string, value: string) {
+function persistCrossTab(key: string, value: string) {
   try {
     sessionStorage.setItem(key, value);
+    localStorage.setItem(key, value);
   } catch {
     /* ignore */
   }
 }
 
 /**
- * Persists sessionId, leadId, threadId across tab refreshes via sessionStorage.
- * Returns hydrated values and setters.
+ * Manages conversation persistence across browser tabs.
+ * Uses shared localStorage with sessionStorage fallback and
+ * listens to window storage events to synchronize changes across tabs in real-time.
  */
 export function useSessionStorage() {
-  const [sessionId]          = useState<string>(() => getOrCreate(SESSION_KEY));
-  const [leadId, setLeadIdState]   = useState<string | null>(() => {
-    try { return sessionStorage.getItem(LEAD_KEY); } catch { return null; }
-  });
-  const [threadId, setThreadIdState] = useState<string | null>(() => {
-    try { return sessionStorage.getItem(THREAD_KEY); } catch { return null; }
-  });
+  const [sessionId, setSessionIdState] = useState<string>(() => getOrCreateSessionId());
+  const [leadId, setLeadIdState] = useState<string | null>(() => getCrossTab(LEAD_KEY));
+  const [threadId, setThreadIdState] = useState<string | null>(() => getCrossTab(THREAD_KEY));
+
+  // Listen to storage events from other tabs
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === SESSION_KEY && e.newValue) {
+        setSessionIdState(e.newValue);
+      } else if (e.key === LEAD_KEY) {
+        setLeadIdState(e.newValue);
+      } else if (e.key === THREAD_KEY) {
+        setThreadIdState(e.newValue);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
 
   const setLeadId = useCallback((id: string) => {
-    persist(LEAD_KEY, id);
+    persistCrossTab(LEAD_KEY, id);
     setLeadIdState(id);
   }, []);
 
   const setThreadId = useCallback((id: string) => {
-    persist(THREAD_KEY, id);
+    persistCrossTab(THREAD_KEY, id);
     setThreadIdState(id);
   }, []);
 

@@ -235,9 +235,38 @@ function MessageBubble({
             className="msg-user"
             style={{ padding: '10px 14px', maxWidth: '280px' }}
           >
-            <div className="msg-content">
-              <MarkdownRenderer text={msg.content} />
-            </div>
+            {msg.attachments && msg.attachments.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: msg.content ? '8px' : '0' }}>
+                {msg.attachments.map((attUrl, i) => (
+                  <a
+                    key={attUrl + i}
+                    href={attUrl.startsWith('/') ? `${apiBase}${attUrl}` : attUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      display: 'block',
+                      width: '72px',
+                      height: '72px',
+                      borderRadius: '8px',
+                      overflow: 'hidden',
+                      border: '1px solid rgba(255,255,255,0.2)',
+                      boxShadow: '0 2px 6px rgba(0,0,0,0.3)',
+                    }}
+                  >
+                    <img
+                      src={attUrl.startsWith('/') ? `${apiBase}${attUrl}` : attUrl}
+                      alt="Project requirement"
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    />
+                  </a>
+                ))}
+              </div>
+            )}
+            {msg.content && (
+              <div className="msg-content">
+                <MarkdownRenderer text={msg.content} />
+              </div>
+            )}
           </div>
 
           {/* Status row */}

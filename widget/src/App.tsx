@@ -100,13 +100,14 @@ export default function App({ config }: AppProps) {
   );
 
   const handleSendMessage = useCallback(
-    async (text: string) => {
-      if (!text.trim()) return;
+    async (text: string, attachments?: string[]) => {
+      if (!text.trim() && (!attachments || attachments.length === 0)) return;
 
       const userMsg: Message = {
         id: `user-${Date.now()}`,
         role: 'user',
         content: text.trim(),
+        attachments: attachments || [],
         status: 'sending',
         timestamp: new Date(),
       };
@@ -114,7 +115,7 @@ export default function App({ config }: AppProps) {
 
       // Optimistic: set to delivered after WS send
       try {
-        await wsSend(text.trim());
+        await wsSend(text.trim(), attachments);
         setMessages((prev) =>
           prev.map((m) =>
             m.id === userMsg.id ? { ...m, status: 'delivered' } : m,

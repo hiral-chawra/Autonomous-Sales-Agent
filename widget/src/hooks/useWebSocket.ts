@@ -9,7 +9,7 @@ interface UseWebSocketOptions {
 }
 
 interface UseWebSocketReturn {
-  sendMessage: (text: string) => Promise<void>;
+  sendMessage: (text: string, attachments?: string[]) => Promise<void>;
   status: WSStatus;
   latency: number;
 }
@@ -180,11 +180,11 @@ export function useWebSocket({
     };
   }, [connect, enabled]);
 
-  const sendMessage = useCallback(async (text: string): Promise<void> => {
+  const sendMessage = useCallback(async (text: string, attachments?: string[]): Promise<void> => {
     if (wsRef.current?.readyState !== WebSocket.OPEN) {
       throw new Error('WebSocket not connected');
     }
-    wsRef.current.send(JSON.stringify({ type: 'message', content: text }));
+    wsRef.current.send(JSON.stringify({ type: 'message', content: text, attachments: attachments || [] }));
     // Add a streaming typing indicator immediately
     onMessageRef.current?.({
       id: `typing-${Date.now()}`,
