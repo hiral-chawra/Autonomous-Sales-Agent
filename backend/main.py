@@ -473,16 +473,26 @@ async def chat_stream_endpoint(websocket: WebSocket, session_id: str):
                     or ""
                 )
 
+                email_val = lead_data.get("email") or current_values.get("user_email") or ""
+                name_val = lead_data.get("full_name") or current_values.get("user_name") or ""
+                phone_val = lead_data.get("phone") or current_values.get("user_phone") or ""
+                verified_raw = lead_data.get("is_verified") if lead_data.get("is_verified") is not None else current_values.get("is_verified", False)
+                # Verification is strictly invalid without a verified attendee email
+                is_verified = bool(verified_raw) and bool(email_val)
+                step_val = lead_data.get("pending_step") or current_values.get("pending_step") or "COLLECT_NAME"
+                if not email_val and step_val == "VERIFIED":
+                    step_val = "COLLECT_EMAIL" if name_val else "COLLECT_NAME"
+
                 input_state = {
                     "messages": [HumanMessage(content=user_text)],
                     "lead_stage": lead_data.get("pipelineStage") or current_values.get("lead_stage") or "QUALIFYING",
                     "bant_score": lead_data.get("qualificationScore") or current_values.get("bant_score") or 3,
-                    "user_email": lead_data.get("email") or current_values.get("user_email") or "",
-                    "user_name": lead_data.get("full_name") or current_values.get("user_name") or "",
-                    "user_phone": lead_data.get("phone") or current_values.get("user_phone") or "",
-                    "is_verified": lead_data.get("is_verified") if lead_data.get("is_verified") is not None else current_values.get("is_verified", False),
+                    "user_email": email_val,
+                    "user_name": name_val,
+                    "user_phone": phone_val,
+                    "is_verified": is_verified,
                     "otp_code": lead_data.get("otp_code") or current_values.get("otp_code") or "",
-                    "pending_step": lead_data.get("pending_step") or current_values.get("pending_step") or "COLLECT_NAME",
+                    "pending_step": step_val,
                     "needs_human": False,
                     "photo_context": photo_ctx
                 }
@@ -499,7 +509,9 @@ async def chat_stream_endpoint(websocket: WebSocket, session_id: str):
                     if result.get("user_name"): update_fields["full_name"] = result["user_name"]
                     if result.get("user_email"): update_fields["email"] = result["user_email"]
                     if result.get("user_phone"): update_fields["phone"] = result["user_phone"]
-                    if result.get("is_verified") is not None: update_fields["is_verified"] = result["is_verified"]
+                    if result.get("is_verified") is not None:
+                        res_email = result.get("user_email") or email_val
+                        update_fields["is_verified"] = bool(result["is_verified"]) and bool(res_email)
                     if result.get("otp_code"): update_fields["otp_code"] = result["otp_code"]
                     if result.get("pending_step"): update_fields["pending_step"] = result["pending_step"]
                     if result.get("lead_stage"): update_fields["pipelineStage"] = result["lead_stage"]
