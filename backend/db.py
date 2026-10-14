@@ -2,13 +2,14 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorClient
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-load_dotenv()
+load_dotenv(find_dotenv(usecwd=True))
 
-MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
-client = AsyncIOMotorClient(MONGODB_URL, serverSelectionTimeoutMS=2000)
-db = client[os.getenv("MONGODB_DB_NAME", "aanandi_sales")]
+MONGODB_URL = os.getenv("MONGODB_URI") or os.getenv("MONGODB_URL") or "mongodb://localhost:27017"
+DATABASE_NAME = os.getenv("DATABASE_NAME") or os.getenv("MONGODB_DB_NAME") or "aanandi_sales"
+client = AsyncIOMotorClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
+db = client[DATABASE_NAME]
 
 # Database Collections (All 7 Core Collections)
 leads_collection = db["leads"]

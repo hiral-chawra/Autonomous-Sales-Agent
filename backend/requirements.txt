@@ -11,4 +11,7 @@ langchain-core
 langchain
 langchain-openai
 langgraph
+openai
+pypdf
+tiktoken
 pipecat-ai[whisper,google,elevenlabs,websocket,langchain]==1.12.0

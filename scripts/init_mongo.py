@@ -46,36 +46,47 @@ SEED_KNOWLEDGE = [
         "title": "Aanandi TechnoSoft Overview & Core Capabilities",
         "category": "capabilities",
         "content": (
-            "Aanandi TechnoSoft designs, engineers, and deploys high-availability Autonomous AI Agents, "
-            "multimodal sales widgets, and workflow automation. Our stack features FastAPI, LangGraph, "
-            "Pipecat AI, Web Audio/WebRTC, MongoDB Atlas Vector Search, and sub-100ms TTS/STT pipelines."
+            "Aanandi TechnoSoft LLP (https://aanandi.in) is an elite AI-Powered Product Engineering and Digital Growth Partner. "
+            "With 15+ years of engineering experience, 500+ completed projects, and 160K+ users globally, we build scalable mobile apps, "
+            "enterprise SaaS platforms, and intelligent workflow automations across Sales, Support, Finance, and Operations. "
+            "Backed by ISO 27001 Certification, CMMI Level 3 maturity, and GDPR, HIPAA, and SOC2 compliance."
         )
     },
     {
-        "title": "Healthcare & Telemedicine AI Solutions",
-        "category": "case_studies",
+        "title": "Aanandi Portfolio: 9 Live Commercial Platforms",
+        "category": "portfolio",
         "content": (
-            "Case Study: Automated patient intake and voice triage assistant integrated with EHR systems. "
-            "Achieved 99.9% uptime, reduced appointment booking friction by 74%, and handled HIPAA-compliant "
-            "pre-consultation symptoms collection with real-time human agent handoff."
+            "Aanandi TechnoSoft has engineered and deployed 9 live commercial platforms with verified web demos and Google Play Store apps: "
+            "Uclean Laundry (on-demand laundry booking & tracking), Swagmee Fashion (mobile fashion discovery & 1-click checkout), "
+            "Jotno Patient (healthcare EHR, patient records & clinic workflows), Wedding Gallery (digital wedding planning & RSVP), "
+            "HungerGo Food (real-time food delivery & dispatch), Careasy Customer (automotive & home repair booking), "
+            "VHelp (vetted emergency & community support), Service Plug (multi-category enterprise service dispatch), and "
+            "Grocery Delivery (multi-hub dark store inventory & rapid delivery routing)."
         )
     },
     {
-        "title": "FinTech Lead Qualification & KYC Automation",
+        "title": "FinTech Lead Qualification & Revenue Operations",
         "category": "case_studies",
         "content": (
-            "Case Study: Real-time fraud detection and KYC intake bot. Provided instant BANT qualification, "
-            "verified identities with automated OTP SMS/email flows, and routed high-net-worth prospects "
-            "directly to certified wealth management advisors within 90 seconds."
+            "Case Study: 52% improvement in qualified lead conversion for a FinTech platform through automated lead scoring, "
+            "enrichment workflows, and intelligent CRM routing to advisors within 90 seconds. Eliminated manual data entry and "
+            "accelerated prospect handoffs."
         )
     },
     {
-        "title": "Enterprise CRM & Custom Workflow Orchestration",
+        "title": "Customer Support AI Triage & Resolution",
         "category": "case_studies",
         "content": (
-            "Case Study: Bi-directional synchronization agents connecting sales chats with Salesforce, "
-            "HubSpot, and Zoho CRM. Features automated calendar scheduling via Cal.com API v2 and upfront "
-            "escrow/deposit commitment payments via Razorpay QR codes."
+            "Case Study: 52% faster ticket resolution and cleaner support queues by deploying AI ticket classification, "
+            "knowledge base synthesis, and smart routing to specialized human agents for complex escalations."
+        )
+    },
+    {
+        "title": "FinTech Loan Processing Automation",
+        "category": "case_studies",
+        "content": (
+            "Case Study: 38% faster resolution in loan processing through automated document extraction, automated eligibility checks, "
+            "and bi-directional CRM orchestration, saving loan officers 3+ hours daily."
         )
     }
 ]
@@ -93,40 +104,55 @@ async def init_mongodb():
         print("[+] Beanie ODM initialized successfully.")
 
         # 1. Compound B-Tree Index for Sub-Millisecond 90s Cron Sweeps
-        print("[*] Creating compound index on follow_up_queue (status, scheduled_at)...")
-        await db["follow_up_queue"].create_index(
-            [("status", ASCENDING), ("scheduled_at", ASCENDING)],
-            name="idx_status_scheduled_at"
-        )
+        try:
+            print("[*] Creating compound index on follow_up_queue (status, scheduled_at)...")
+            await db["follow_up_queue"].create_index(
+                [("status", ASCENDING), ("scheduled_at", ASCENDING)],
+                name="idx_status_scheduled_at"
+            )
+        except Exception as e:
+            print(f"[i] follow_up_queue index notice: {e}")
 
         # 2. Unique index on Lead emails
-        print("[*] Creating unique index on leads (email)...")
-        await db["leads"].create_index(
-            [("email", ASCENDING)],
-            unique=True,
-            name="uniq_lead_email"
-        )
+        try:
+            print("[*] Creating unique index on leads (email)...")
+            await db["leads"].create_index(
+                [("email", ASCENDING)],
+                unique=True,
+                name="uniq_lead_email"
+            )
+        except Exception as e:
+            print(f"[i] leads index notice: {e}")
 
         # 3. Unique index on Conversations session_id
-        print("[*] Creating unique index on conversations (session_id)...")
-        await db["conversations"].create_index(
-            [("session_id", ASCENDING)],
-            unique=True,
-            name="uniq_conversation_session_id"
-        )
+        try:
+            print("[*] Creating unique index on conversations (session_id)...")
+            await db["conversations"].create_index(
+                [("session_id", ASCENDING)],
+                unique=True,
+                name="uniq_conversation_session_id"
+            )
+        except Exception as e:
+            print(f"[i] conversations index notice: {e}")
 
         # 4. Unique index on Payment Transactions order_id
-        print("[*] Creating unique index on payment_transactions (order_id)...")
-        await db["payment_transactions"].create_index(
-            [("order_id", ASCENDING)],
-            unique=True,
-            name="uniq_payment_order_id"
-        )
+        try:
+            print("[*] Creating unique index on payment_transactions (order_id)...")
+            await db["payment_transactions"].create_index(
+                [("order_id", ASCENDING)],
+                unique=True,
+                name="uniq_payment_order_id"
+            )
+        except Exception as e:
+            print(f"[i] payment_transactions index notice: {e}")
 
         # 5. Indexes on Booking Records and Call Logs
-        print("[*] Creating lookup indexes on booking_records and call_logs...")
-        await db["booking_records"].create_index([("session_id", ASCENDING)], name="idx_booking_session_id")
-        await db["call_logs"].create_index([("session_id", ASCENDING)], name="idx_call_session_id")
+        try:
+            print("[*] Creating lookup indexes on booking_records and call_logs...")
+            await db["booking_records"].create_index([("session_id", ASCENDING)], name="idx_booking_session_id")
+            await db["call_logs"].create_index([("session_id", ASCENDING)], name="idx_call_session_id")
+        except Exception as e:
+            print(f"[i] lookup indexes notice: {e}")
 
         # 6. Seed Knowledge Chunks for Vector Search if empty
         existing_chunks = await KnowledgeChunk.count()

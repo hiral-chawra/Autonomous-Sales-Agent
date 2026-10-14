@@ -1,5 +1,10 @@
 import os
 import sys
+from dotenv import load_dotenv, find_dotenv
+
+# Explicitly find and load the .env file in the root directory before local imports
+load_dotenv(find_dotenv(usecwd=True))
+
 import json
 import asyncio
 import datetime
@@ -14,7 +19,6 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Requ
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from dotenv import load_dotenv
 
 from pipecat.transports.websocket.server import WebsocketServerTransport, WebsocketServerParams
 from bot import run_voice_agent
@@ -26,8 +30,6 @@ from db import (
 )
 from dispatch import send_email_dispatch
 from langchain_core.messages import HumanMessage
-
-load_dotenv()
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -284,6 +286,66 @@ async def intercept_lead(lead: LeadInterceptPayload):
 
     return {"status": "success", "lead_id": lead_id}
 
+async def analyze_project_photo_content(file_bytes: bytes, filename: str) -> str:
+    """Uses vision LLM (OpenRouter / OpenAI) to inspect uploaded diagram, wireframe, or photo."""
+    openrouter_key = os.getenv("OPENROUTER_API_KEY")
+    if openrouter_key:
+        try:
+            import base64
+            import httpx
+            b64_img = base64.b64encode(file_bytes).decode("utf-8")
+            ext = os.path.splitext(filename)[1].lower().replace(".", "")
+            mime = f"image/{'jpeg' if ext in ['jpg', 'jpeg'] else 'png' if ext == 'png' else 'webp' if ext == 'webp' else 'png'}"
+            
+            headers = {
+                "Authorization": f"Bearer {openrouter_key}",
+                "Content-Type": "application/json"
+            }
+            body = {
+                "model": "openai/gpt-4o-mini",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "You are an AI Sales Engineer at Aanandi TechnoSoft (https://aanandi.in). "
+                                    "Analyze this uploaded client project requirement image/wireframe/diagram. "
+                                    "Provide a concise 2-3 sentence technical summary: "
+                                    "1) What the user is trying to build or demonstrate, "
+                                    "2) Key UI/architectural elements visible, and "
+                                    "3) Recommended Aanandi technical services (e.g., custom AI agent, CRM sync, voice widget, workflow automation)."
+                                )
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{mime};base64,{b64_img}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "max_tokens": 250
+            }
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                res = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=body)
+                if res.status_code == 200:
+                    data = res.json()
+                    analysis = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                    if analysis:
+                        return analysis
+        except Exception as e:
+            print(f"[PHOTO AI ANALYSIS NOTICE] Vision API fallback: {e}")
+
+    # Fallback summary
+    return (
+        f"Uploaded requirement attachment '{filename}'. "
+        "Contains client project architectural/functional requirements. "
+        "Recommended for review by Aanandi's senior technical architects during discovery intake."
+    )
+
 # ── Project Requirements Photo Upload Endpoint ────────────────────────
 @app.post("/api/v1/upload/photo")
 async def upload_project_photo(
@@ -293,7 +355,8 @@ async def upload_project_photo(
 ):
     """
     Accepts photo attachments from prospects regarding their project requirements,
-    stores them securely, and links them to the lead's CRM record.
+    stores them securely, performs AI visual content inspection, links them to the lead's CRM record,
+    and routes an alert email directly to the human call assistance & tech teams.
     """
     if not file.content_type or not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Only image attachments (PNG, JPG, WEBP) are supported.")
@@ -309,10 +372,69 @@ async def upload_project_photo(
     photo_url = f"/uploads/{safe_name}"
     await link_lead_photo(photo_url=photo_url, session_id=session_id, lead_id=lead_id)
 
+    # 1. AI Visual Content Analysis
+    analysis_text = await analyze_project_photo_content(content, file.filename)
+
+    # 2. Update CRM record with photo analysis
+    try:
+        await leads_collection.update_one(
+            {"session_id": session_id},
+            {
+                "$set": {
+                    "last_photo_analysis": analysis_text,
+                    "updated_at": datetime.datetime.now(datetime.timezone.utc)
+                }
+            }
+        )
+    except Exception as e:
+        print(f"[CRM PHOTO UPDATE ERROR] {e}")
+
+    # 3. Fetch lead details for human team notification
+    lead_name = "Prospective Client"
+    lead_email = "Not yet provided"
+    lead_phone = "Not yet provided"
+    try:
+        lead_doc = await leads_collection.find_one({"session_id": session_id}) or {}
+        lead_name = lead_doc.get("full_name") or lead_doc.get("name") or lead_name
+        lead_email = lead_doc.get("email") or lead_email
+        lead_phone = lead_doc.get("phone") or lead_phone
+    except Exception:
+        pass
+
+    # 4. Dispatch Email to Human Call Assistance Team & Tech Team
+    tech_team_email = os.getenv("TECH_TEAM_EMAIL", "asmiupadhyay491@gmail.com")
+    receptionist_email = os.getenv("RECEPTIONIST_EMAIL", "pyashkumar0312@gmail.com")
+
+    subject = f"📎 New Requirement Photo Uploaded: {lead_name} ({file.filename})"
+    body = (
+        "Hello Aanandi Call Assistance & Technical Team,\n\n"
+        "A prospective client has attached a project requirement photo during their chat session.\n\n"
+        "── Client Details ──\n"
+        f"• Name: {lead_name}\n"
+        f"• Email: {lead_email}\n"
+        f"• Phone: {lead_phone}\n"
+        f"• Session ID: {session_id}\n\n"
+        "── Attachment Details ──\n"
+        f"• Filename: {file.filename}\n"
+        f"• Server Path / URL: {photo_url}\n\n"
+        "── AI Visual Content Analysis ──\n"
+        f"{analysis_text}\n\n"
+        "Please review this requirement before initiating the discovery call.\n\n"
+        "— Aanandi Autonomous Sales Agent"
+    )
+
+    try:
+        send_email_dispatch(tech_team_email, subject, body)
+        if receptionist_email != tech_team_email:
+            send_email_dispatch(receptionist_email, subject, body)
+    except Exception as e:
+        print(f"[ATTACHMENT ROUTING NOTICE] Failed to send team email: {e}")
+
     return {
         "status": "success",
         "url": photo_url,
-        "filename": file.filename
+        "filename": file.filename,
+        "analysis": analysis_text
     }
 
 # ── 2. Real-Time Chat WebSocket (LangGraph Streaming) ────────────────
@@ -429,7 +551,7 @@ async def chat_stream_endpoint(websocket: WebSocket, session_id: str):
 async def voice_websocket_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
 
-    # Extract previous text chat history from LangGraph checkpointer / state for memory retention
+    # Extract previous text chat history from LangGraph checkpointer & MongoDB for memory retention
     formatted_history = []
     try:
         config = {"configurable": {"thread_id": session_id}}
@@ -442,6 +564,45 @@ async def voice_websocket_endpoint(websocket: WebSocket, session_id: str):
                     formatted_history.append({"role": role, "content": m.content.strip()})
     except Exception:
         pass
+
+    # State Hydration from MongoDB (The Memory Bridge)
+    lead_name = ""
+    lead_email = ""
+    photo_context = ""
+    try:
+        lead_doc = await leads_collection.find_one({"session_id": session_id})
+        if lead_doc:
+            lead_name = lead_doc.get("full_name") or lead_doc.get("name") or ""
+            lead_email = lead_doc.get("email") or ""
+            photo_context = lead_doc.get("last_photo_analysis") or ""
+    except Exception as e:
+        print(f"[STATE HYDRATION NOTICE] Lead doc lookup notice: {e}")
+
+    # Fallback to MongoDB conversation history if checkpointer was empty
+    if not formatted_history:
+        try:
+            conv_doc = await conversations_collection.find_one({"session_id": session_id})
+            if conv_doc and "messages" in conv_doc:
+                for m in conv_doc["messages"]:
+                    role = m.get("role", "user")
+                    content = m.get("content", "").strip()
+                    if content:
+                        formatted_history.append({"role": role, "content": content})
+        except Exception as e:
+            print(f"[STATE HYDRATION NOTICE] Conversation doc lookup notice: {e}")
+
+    # Inject Lead Context Summary before the first utterance
+    lead_summary_parts = []
+    if lead_name:
+        lead_summary_parts.append(f"Client Name: {lead_name}")
+    if lead_email:
+        lead_summary_parts.append(f"Client Email: {lead_email}")
+    if photo_context:
+        lead_summary_parts.append(f"Client Uploaded Requirement Notes: {photo_context}")
+
+    if lead_summary_parts:
+        summary_msg = "Known Lead Memory from Prior Text Interaction:\n" + "\n".join(lead_summary_parts)
+        formatted_history.insert(0, {"role": "system", "content": summary_msg})
 
     from pipecat.transports.websocket.fastapi import FastAPIWebsocketTransport, FastAPIWebsocketParams
     from bot import RawPCMFrameSerializer
@@ -474,6 +635,7 @@ def _cal_scheduling_config() -> tuple[str, int, str]:
 
 
 @app.get("/api/v1/scheduling/availability")
+@app.get("/api/v1/scheduling/slots")
 async def get_availability(session_id: str, week_offset: int = 0):
     api_key, event_type_id, time_zone = _cal_scheduling_config()
     start_date = datetime.datetime.now(datetime.timezone.utc).date() + datetime.timedelta(days=1 + week_offset * 7)

@@ -32,26 +32,30 @@ class AgentState(TypedDict):
     tool_payload: dict | None
     needs_human: bool
 
-# Comprehensive Knowledge Base Data
-PROJECTS_AND_CASE_STUDIES = """Aanandi TechnoSoft has successfully designed, developed, and deployed high-impact AI agents and software projects across key industries:
+# Comprehensive Knowledge Base Data (Aanandi TechnoSoft Documentation & Portfolio)
+PROJECTS_AND_CASE_STUDIES = """Aanandi TechnoSoft LLP (https://aanandi.in) is an elite AI Integration and Workflow Automation agency. With 15+ years of engineering experience, 500+ delivered platforms, and 160K+ users globally, we build high-availability Autonomous AI Agents, custom workflow automations, and enterprise software solutions:
 
-1. 🏥 **Healthcare & Telemedicine**:
-   - **AI Patient Triage & Voice Appointment Bots**: Automated appointment scheduling, EHR integration, and pre-consultation symptom intake with ultra-low latency voice audio.
+1. 🚀 **Sales & Lead Intake Automation**:
+   - **Automated Lead Intake & 90-Second Response**: Instant prospect qualification, BANT scoring, and automated outreach triggering within 90 seconds of form submissions.
+   - **Lead Enrichment & CRM Handoff**: Automated prospect enrichment, ownership routing, and direct bi-directional sync into Salesforce, HubSpot, and Zoho CRM.
 
-2. 🏦 **FinTech & Financial Services**:
-   - **Automated Lead Qualification & KYC Verification**: Real-time user document intake, instant fraud risk scoring, and automated compliance routing.
+2. ⚡ **Customer Support AI Agents & Omnichannel Triage**:
+   - **Support Triage & Smart Routing**: AI ticket classification, sentiment analysis, and intelligent escalation to human specialists, resulting in 52% faster resolution times.
+   - **24/7 Omnichannel Support**: Autonomous multi-turn resolution for text and voice support across web, WhatsApp, and telephony.
 
-3. 🛍️ **E-Commerce & Retail**:
-   - **24/7 Autonomous Sales & Multimodal Shopping Agents**: Interactive web chat & voice widget supporting product recommendations, order tracking, and cart recovery.
+3. 🏥 **Healthcare & Telemedicine Platforms (Jotno Patient EHR)**:
+   - **Secure Patient Triage & Clinic Workflows**: HIPAA-compliant electronic prescriptions, appointment scheduling, and direct EHR/EMR integrations.
 
-4. 🏢 **Enterprise SaaS & CRM Automation**:
-   - **Custom Workflow & CRM Integration Agents**: Automated bi-directional sync with Salesforce, HubSpot, and Zoho CRM, backed by PostgreSQL and Redis.
+4. 🏦 **FinTech Operations & Loan Processing Automation**:
+   - **Automated KYC & Loan Document Intake**: 38% faster loan processing resolution through automated document OCR extraction, eligibility scoring, and CRM workflow orchestration.
+   - **Revenue Operations Lift**: 52% improvement in qualified lead conversion through automated scoring and routing.
 
-5. 🏡 **Real Estate & Legal Tech**:
-   - **Intelligent Document Extraction & Onboarding Assistants**: Instant parsing of complex legal contracts and property inquiry handling.
+5. 📱 **Production Portfolio (9 Live Commercial Platforms)**:
+   - Live products backed with verified web demos and Google Play Store apps including Uclean Laundry (laundry booking & tracking), Swagmee Fashion (discovery & checkout), Jotno Patient (healthcare EHR), HungerGo Food (live map food delivery), Careasy Customer (automotive & home repair), VHelp (emergency assistance), Service Plug (enterprise service dispatch), and Grocery Delivery.
 
-6. 🎙️ **Real-Time Multimodal Web Widgets**:
-   - High-performance web widget powered by Python FastAPI, LangGraph, Pipecat, Whisper STT, and ElevenLabs TTS."""
+6. 🛠️ **Enterprise Delivery Methodology & Security**:
+   - Transparent 6-step delivery: Discovery → Planning → Development → Testing → Launch → Scale.
+   - Enterprise security: ISO 27001 Certified ISMS, CMMI Level 3 maturity, least-privilege access, and GDPR, HIPAA, and SOC2 compliance with 99.9% uptime enterprise SLAs."""
 
 # Tools Definition
 @tool
@@ -163,9 +167,6 @@ def extract_name(text: str) -> str | None:
     text_clean = text.strip()
     text_lower = text_clean.lower()
 
-    if is_user_query(text_clean):
-        return None
-
     # Ignore general conversational responses / help queries
     non_names = {
         "hi", "hello", "hey", "start", "thanks", "thank you", "yes", "no", "sure", "ok", "okay",
@@ -175,6 +176,7 @@ def extract_name(text: str) -> str | None:
     if text_lower in non_names:
         return None
 
+    # Check for explicit introductory prefixes first (e.g. "My name is John Doe")
     prefixes = ["my name is ", "i am ", "i'm ", "this is ", "call me ", "myself "]
     has_prefix = False
     for p in prefixes:
@@ -182,6 +184,10 @@ def extract_name(text: str) -> str | None:
             text_clean = text_clean[len(p):].strip()
             has_prefix = True
             break
+
+    # If no prefix, ensure it's not a general question/query
+    if not has_prefix and is_user_query(text_clean):
+        return None
 
     words = text_clean.split()
     if 1 <= len(words) <= 3 and all(w.replace("-", "").replace(".", "").replace("_", "").isalpha() for w in words):
@@ -192,8 +198,71 @@ def extract_name(text: str) -> str | None:
 
     return None
 
-def generate_ai_answer(user_query: str, kb_data: str) -> str:
-    """Generates an intelligent answer using OpenRouter LLM if available, or structured response as fallback."""
+def generate_dynamic_followups(user_query: str) -> list[str]:
+    """Generates 2-3 dynamic follow-up question chips mapped specifically to the user's business query topic."""
+    q_lower = user_query.lower()
+    
+    # 1. Voice Bots / Omnichannel Support
+    if any(k in q_lower for k in ["voice", "audio", "call", "phone", "speech", "talk", "support"]):
+        return [
+            "How do 24/7 AI Voice & Support Agents handle triage?",
+            "Can support agents integrate directly with our CRM?",
+            "Talk to AI (Live Voice Consultation)"
+        ]
+    # 2. Healthcare / Telemedicine
+    elif any(k in q_lower for k in ["health", "hospital", "patient", "triage", "ehr", "hipaa", "clinic", "doctor", "medical", "jotno"]):
+        return [
+            "How does Jotno Patient EHR manage clinic workflows?",
+            "Are your healthcare platforms HIPAA & GDPR compliant?",
+            "Book a Discovery Call with Healthcare Solutions Team"
+        ]
+    # 3. CRM / Workflow Automation / ERP
+    elif any(k in q_lower for k in ["crm", "salesforce", "hubspot", "zoho", "sync", "lead", "workflow", "automate", "pipeline"]):
+        return [
+            "How does bi-directional sync work with Salesforce and HubSpot?",
+            "Can you automate lead intake and qualification within 90 seconds?",
+            "Book a 15-min Workflow Architecture Call"
+        ]
+    # 4. FinTech / KYC / Loan Processing
+    elif any(k in q_lower for k in ["fintech", "kyc", "fraud", "bank", "payment", "loan", "security", "document", "invoice"]):
+        return [
+            "How did you achieve a 52% conversion lift in FinTech?",
+            "How does automated invoice and loan document extraction work?",
+            "Schedule a FinTech Automation Consultation"
+        ]
+    # 5. Delivery Platforms / Hyperlocal / Mobile Apps
+    elif any(k in q_lower for k in ["food", "grocery", "laundry", "hyperlocal", "dispatch", "fleet", "app", "mobile", "flutter"]):
+        return [
+            "Tell me about live platforms like Uclean and HungerGo",
+            "How do your real-time dispatch and GPS tracking work?",
+            "Explore Our 9 Live Portfolio Apps"
+        ]
+    # 6. Pricing / Delivery / Timeline
+    elif any(k in q_lower for k in ["price", "pricing", "cost", "timeline", "sprint", "milestone", "delivery", "tier", "quote"]):
+        return [
+            "What is your 6-step milestone delivery process?",
+            "What is included in your ISO 27001 & Enterprise SLAs?",
+            "Book a Discovery Call to get a Custom Quote"
+        ]
+    # 7. General / Portfolio
+    else:
+        return [
+            "Tell me about your 9 live commercial portfolio apps",
+            "How does Custom CRM & Workflow Automation work?",
+            "Book a Discovery Call with Senior Technical Team"
+        ]
+
+def generate_ai_answer_with_followups(
+    user_query: str,
+    kb_data: str,
+    chat_history: list[BaseMessage] | None = None,
+    lead_context: dict | None = None
+) -> tuple[str, list[str]]:
+    """
+    Generates a personalized, professional sales engineer answer using the verified Knowledge Base,
+    respecting full conversational history and lead context, with strict guardrails against
+    disclosing internal widget implementation details.
+    """
     openrouter_key = os.getenv("OPENROUTER_API_KEY")
     if openrouter_key:
         try:
@@ -203,24 +272,98 @@ def generate_ai_answer(user_query: str, kb_data: str) -> str:
                 base_url="https://openrouter.ai/api/v1",
                 model="openai/gpt-4o-mini",
                 temperature=0.3,
-                request_timeout=5.0
+                request_timeout=10.0
             )
-            sys_msg = SystemMessage(content=(
-                "You are Aanandi, the elite AI Sales Engineer for Aanandi TechnoSoft. "
-                "Answer the user's question clearly, warmly, and professionally using the following Knowledge Base data:\n\n"
-                f"{kb_data}\n\n"
-                "Keep your response concise and formatted nicely with markdown bullet points."
-            ))
-            res = llm.invoke([sys_msg, HumanMessage(content=user_query)])
-            if res and res.content:
-                return res.content.strip()
-        except Exception:
-            pass
 
-    return (
-        f"Here is information about our projects and capabilities:\n\n{kb_data}\n\n"
-        "What specific feature or industry solution would you like to explore next?"
+            # Build lead profile context for personalization
+            lead_profile_text = ""
+            if lead_context:
+                lead_parts = []
+                if lead_context.get("user_name"):
+                    lead_parts.append(f"Prospect Name: {lead_context['user_name']}")
+                if lead_context.get("user_email"):
+                    lead_parts.append(f"Prospect Email: {lead_context['user_email']}")
+                if lead_context.get("user_phone"):
+                    lead_parts.append(f"Prospect Phone: {lead_context['user_phone']}")
+                if lead_context.get("lead_stage"):
+                    lead_parts.append(f"Lifecycle Stage: {lead_context['lead_stage']}")
+                if lead_parts:
+                    lead_profile_text = "CURRENT PROSPECT PROFILE:\n" + "\n".join(f"- {p}" for p in lead_parts) + "\n\n"
+
+            sys_prompt = (
+                "You are Aanandi, the elite client-facing AI Sales Engineer for Aanandi TechnoSoft LLP (https://aanandi.in).\n"
+                "Aanandi TechnoSoft is an AI Integration and Workflow Automation agency with 15+ years of experience, "
+                "500+ delivered platforms, and 160K+ users globally, backed by ISO 27001 Certification, CMMI Level 3 maturity, "
+                "and GDPR, HIPAA, and SOC2 compliance.\n\n"
+                f"{lead_profile_text}"
+                "VERIFIED KNOWLEDGE BASE & PORTFOLIO DATA:\n"
+                f"{kb_data}\n\n"
+                "STRICT PERSONA, MISSION & BOUNDARY RULES:\n"
+                "1. STRICTLY CLIENT-FACING SALES ENGINEER: You pitch ONLY Aanandi TechnoSoft's actual client services, "
+                "our 9 live portfolio apps (Uclean Laundry, Swagmee Fashion, Jotno Patient Healthcare EHR, HungerGo, Careasy, etc.), "
+                "workflow automations (Sales, Support, Finance, HR, Operations), and verified client case studies (e.g., 52% FinTech conversion lift, 52% faster support triage).\n"
+                "2. EXPLICITLY FORBIDDEN FROM TALKING ABOUT HOW YOU WERE BUILT: You must NEVER disclose, discuss, or pitch "
+                "your own underlying source code, widget architecture, or internal tools. NEVER mention LangGraph, Pipecat, FastAPI, WebSockets, "
+                "Web Audio/WebRTC, Shadow DOM, Cal.com API v2, Razorpay QR codes, or internal prompt pipelines.\n"
+                "3. DEFLECT ARCHITECTURAL QUERIES GRACEFULLY: If the user asks how you were built or what tech stack you use, "
+                "politely clarify that you are Aanandi TechnoSoft's sales representative, and highlight the modern enterprise tech stack "
+                "we engineer for our clients (e.g., React, Next.js, Flutter, React Native, Python, Node.js microservices, AWS/Azure, "
+                "and enterprise CRM connectors for Salesforce, HubSpot, and Zoho).\n"
+                "4. ATTENTIVE TO LEAD'S CHAT KNOWLEDGE: Actively read the prior conversation history. If the lead mentioned their company, "
+                "their industry (e.g. healthcare, fintech, e-commerce, logistics), their team's pain points, or their goals, acknowledge that context "
+                "directly and tailor your answers to solve their specific business problem.\n"
+                "5. TONE & FORMAT: Warm, sharp, professional, consultative, and concise (use structured markdown bullet points). "
+                "Never invent non-existent clients or features.\n\n"
+                "CRITICAL: At the very end of your response, generate exactly 2 to 3 dynamic, context-specific follow-up questions "
+                "that the lead can ask next in this chat. Format the end strictly as:\n"
+                "FOLLOW_UPS:\n"
+                "- [Dynamic Question 1]\n"
+                "- [Dynamic Question 2]\n"
+                "- [Dynamic Question 3]"
+            )
+
+            messages_to_send = [SystemMessage(content=sys_prompt)]
+
+            # Inject recent chat history (up to last 6 messages) for conversational continuity
+            if chat_history:
+                recent_msgs = [m for m in chat_history if isinstance(m, (HumanMessage, AIMessage))][-6:]
+                # Avoid duplicating the current message if it's already the last element in chat_history
+                if recent_msgs and recent_msgs[-1].content.strip() == user_query.strip():
+                    messages_to_send.extend(recent_msgs)
+                else:
+                    messages_to_send.extend(recent_msgs)
+                    messages_to_send.append(HumanMessage(content=user_query))
+            else:
+                messages_to_send.append(HumanMessage(content=user_query))
+
+            res = llm.invoke(messages_to_send)
+            if res and res.content:
+                raw_text = res.content.strip()
+                
+                # Extract FOLLOW_UPS if present
+                if "FOLLOW_UPS:" in raw_text:
+                    parts = raw_text.split("FOLLOW_UPS:")
+                    main_answer = parts[0].strip()
+                    follow_up_lines = [line.strip().lstrip("-*•0123456789. ") for line in parts[1].strip().split("\n") if line.strip()]
+                    parsed_followups = [f for f in follow_up_lines if len(f) > 5 and len(f) < 90]
+                    if len(parsed_followups) >= 2:
+                        return main_answer, parsed_followups[:3]
+                
+                return raw_text, generate_dynamic_followups(user_query)
+        except Exception as e:
+            print(f"[DYNAMIC CONVERSATION NOTICE] LLM generation notice: {e}")
+
+    # Fallback response with domain-mapped followups
+    default_answer = (
+        f"Here is information regarding our technical capabilities and solutions:\n\n{kb_data}\n\n"
+        "What specific business workflow or digital platform would you like to explore?"
     )
+    return default_answer, generate_dynamic_followups(user_query)
+
+def generate_ai_answer(user_query: str, kb_data: str) -> str:
+    """Backward compatible wrapper returning only the textual answer."""
+    answer, _ = generate_ai_answer_with_followups(user_query, kb_data)
+    return answer
 
 # ── Graph Nodes Definition ─────────────────────────────────────────────────────
 def triage_node(state: AgentState):
@@ -260,9 +403,9 @@ def reasoning_node(state: AgentState):
                 "data": {
                     "title": "Suggested Follow-ups",
                     "options": [
-                        "Which projects have you made so far?",
+                        "Tell me about your 9 live portfolio apps (Uclean, Jotno, etc.)",
                         "Tell me about Custom CRM Integrations",
-                        "How do AI Voice Bots work?",
+                        "How do AI Voice & Support Agents work?",
                         "Talk to AI (Live Voice Demo)"
                     ]
                 }
@@ -358,9 +501,9 @@ def reasoning_node(state: AgentState):
                         "data": {
                             "title": "Suggested Follow-ups",
                             "options": [
-                                "Which projects have you made so far?",
+                                "Tell me about your 9 live portfolio apps (Uclean, Jotno, etc.)",
                                 "Tell me about Custom CRM Integrations",
-                                "How do AI Voice Bots work?",
+                                "How do AI Voice & Support Agents work?",
                                 "Talk to AI or Book Call"
                             ]
                         }
@@ -419,7 +562,7 @@ def reasoning_node(state: AgentState):
         }
 
     # ── 5. Name Input Detection ────────────────────────────────────────────────
-    if (pending_step == "COLLECT_NAME" or not user_name) and not is_user_query(last_msg):
+    if (pending_step == "COLLECT_NAME" or not user_name):
         potential_name = extract_name(last_msg)
         if potential_name:
             user_name = potential_name
@@ -444,9 +587,9 @@ def reasoning_node(state: AgentState):
                     "data": {
                         "title": "Quick Questions",
                         "options": [
-                            "Which projects have you made so far?",
+                            "Tell me about your 9 live portfolio apps (Uclean, Jotno, etc.)",
                             "Tell me about Custom CRM Integrations",
-                            "How do AI Voice Bots work?",
+                            "How do AI Voice & Support Agents work?",
                             "Talk to AI or Book Call"
                         ]
                     }
@@ -467,7 +610,18 @@ def reasoning_node(state: AgentState):
 
     # ── 7. Non-blocking Product / Knowledge Base Q&A ────────────────────────────
     kb_res = query_knowledge_base.invoke({"query": last_msg})
-    ai_answer = generate_ai_answer(last_msg, kb_res)
+    lead_ctx = {
+        "user_name": user_name,
+        "user_email": user_email,
+        "user_phone": user_phone,
+        "lead_stage": state.get("lead_stage", "QUALIFYING")
+    }
+    ai_answer, dynamic_followups = generate_ai_answer_with_followups(
+        user_query=last_msg,
+        kb_data=kb_res,
+        chat_history=messages,
+        lead_context=lead_ctx
+    )
 
     # If lead is NOT yet verified, append the appropriate next prompt in sequence and suppress MCQ options
     if not is_verified:
@@ -501,7 +655,7 @@ def reasoning_node(state: AgentState):
             "tool_payload": payload
         }
 
-    # If already verified, return AI answer WITH suggested follow-ups MCQ payload
+    # If already verified, return AI answer WITH dynamically generated follow-ups mapped to the lead's query
     return {
         "messages": [AIMessage(content=ai_answer)],
         "lead_stage": "QUALIFYING",
@@ -510,12 +664,7 @@ def reasoning_node(state: AgentState):
             "type": "mcq",
             "data": {
                 "title": "Suggested Follow-ups",
-                "options": [
-                    "Which projects have you made so far?",
-                    "Tell me about Custom CRM Integrations",
-                    "How do AI Voice Bots work?",
-                    "Talk to AI or Book Call"
-                ]
+                "options": dynamic_followups
             }
         }
     }
