@@ -31,6 +31,7 @@ class AgentState(TypedDict):
     pending_step: PendingStep
     tool_payload: dict | None
     needs_human: bool
+    photo_context: str
 
 # Comprehensive Knowledge Base Data (Aanandi TechnoSoft Documentation & Portfolio)
 PROJECTS_AND_CASE_STUDIES = """Aanandi TechnoSoft LLP (https://aanandi.in) is an elite AI Integration and Workflow Automation agency. With 15+ years of engineering experience, 500+ delivered platforms, and 160K+ users globally, we build high-availability Autonomous AI Agents, custom workflow automations, and enterprise software solutions:
@@ -287,6 +288,8 @@ def generate_ai_answer_with_followups(
                     lead_parts.append(f"Prospect Phone: {lead_context['user_phone']}")
                 if lead_context.get("lead_stage"):
                     lead_parts.append(f"Lifecycle Stage: {lead_context['lead_stage']}")
+                if lead_context.get("photo_context"):
+                    lead_parts.append(f"Uploaded Project Requirement Notes (from attached diagram/photo): {lead_context['photo_context']}")
                 if lead_parts:
                     lead_profile_text = "CURRENT PROSPECT PROFILE:\n" + "\n".join(f"- {p}" for p in lead_parts) + "\n\n"
 
@@ -313,7 +316,13 @@ def generate_ai_answer_with_followups(
                 "their industry (e.g. healthcare, fintech, e-commerce, logistics), their team's pain points, or their goals, acknowledge that context "
                 "directly and tailor your answers to solve their specific business problem.\n"
                 "5. TONE & FORMAT: Warm, sharp, professional, consultative, and concise (use structured markdown bullet points). "
-                "Never invent non-existent clients or features.\n\n"
+                "Never invent non-existent clients or features.\n"
+                "6. PROJECT PHOTOS & ATTACHMENTS: If 'Uploaded Project Requirement Notes' are present in the prospect profile above, "
+                "refer directly to those technical notes to discuss implementation. You already have the technical breakdown of their image. "
+                "NEVER say 'I am unable to view images' or 'I cannot view external files' when those notes are present. Answer with confidence, "
+                "outlining how Aanandi TechnoSoft will implement the features, flows, and tech stack described in those notes. "
+                "If the lead refers to an attached image or diagram but NO requirement notes are present in their profile, "
+                "politely invite them to upload or attach the file using the attachment button in the chat.\n\n"
                 "CRITICAL: At the very end of your response, generate exactly 2 to 3 dynamic, context-specific follow-up questions "
                 "that the lead can ask next in this chat. Format the end strictly as:\n"
                 "FOLLOW_UPS:\n"
@@ -609,12 +618,14 @@ def reasoning_node(state: AgentState):
             }
 
     # ── 7. Non-blocking Product / Knowledge Base Q&A ────────────────────────────
+    photo_ctx = state.get("photo_context", "")
     kb_res = query_knowledge_base.invoke({"query": last_msg})
     lead_ctx = {
         "user_name": user_name,
         "user_email": user_email,
         "user_phone": user_phone,
-        "lead_stage": state.get("lead_stage", "QUALIFYING")
+        "lead_stage": state.get("lead_stage", "QUALIFYING"),
+        "photo_context": photo_ctx
     }
     ai_answer, dynamic_followups = generate_ai_answer_with_followups(
         user_query=last_msg,
@@ -652,7 +663,8 @@ def reasoning_node(state: AgentState):
             "messages": [AIMessage(content=ai_answer)],
             "lead_stage": "QUALIFYING",
             "pending_step": next_step,
-            "tool_payload": payload
+            "tool_payload": payload,
+            "photo_context": photo_ctx
         }
 
     # If already verified, return AI answer WITH dynamically generated follow-ups mapped to the lead's query
@@ -660,6 +672,7 @@ def reasoning_node(state: AgentState):
         "messages": [AIMessage(content=ai_answer)],
         "lead_stage": "QUALIFYING",
         "pending_step": "VERIFIED",
+        "photo_context": photo_ctx,
         "tool_payload": {
             "type": "mcq",
             "data": {

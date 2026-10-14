@@ -384,7 +384,8 @@ async def upload_project_photo(
                     "last_photo_analysis": analysis_text,
                     "updated_at": datetime.datetime.now(datetime.timezone.utc)
                 }
-            }
+            },
+            upsert=True
         )
     except Exception as e:
         print(f"[CRM PHOTO UPDATE ERROR] {e}")
@@ -465,6 +466,13 @@ async def chat_stream_endpoint(websocket: WebSocket, session_id: str):
                 current_state_obj = await sales_agent.aget_state(config)
                 current_values = current_state_obj.values if current_state_obj else {}
 
+                # Retrieve any vision analysis saved for this session
+                photo_ctx = (
+                    lead_data.get("last_photo_analysis")
+                    or current_values.get("photo_context")
+                    or ""
+                )
+
                 input_state = {
                     "messages": [HumanMessage(content=user_text)],
                     "lead_stage": lead_data.get("pipelineStage") or current_values.get("lead_stage") or "QUALIFYING",
@@ -475,7 +483,8 @@ async def chat_stream_endpoint(websocket: WebSocket, session_id: str):
                     "is_verified": lead_data.get("is_verified") if lead_data.get("is_verified") is not None else current_values.get("is_verified", False),
                     "otp_code": lead_data.get("otp_code") or current_values.get("otp_code") or "",
                     "pending_step": lead_data.get("pending_step") or current_values.get("pending_step") or "COLLECT_NAME",
-                    "needs_human": False
+                    "needs_human": False,
+                    "photo_context": photo_ctx
                 }
 
                 # Run LangGraph Agent
