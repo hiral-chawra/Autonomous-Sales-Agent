@@ -2,6 +2,7 @@ import os
 import requests
 import smtplib
 import threading
+import asyncio
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
@@ -30,7 +31,7 @@ def _send_email_dispatch_sync(to_email: str, subject: str, text_content: str) ->
             msg["Subject"] = subject
             msg.attach(MIMEText(text_content, "plain"))
 
-            with smtplib.SMTP(smtp_server, smtp_port) as server:
+            with smtplib.SMTP(smtp_server, smtp_port, timeout=15) as server:
                 server.starttls()
                 server.login(smtp_user, smtp_password)
                 server.send_message(msg)
@@ -56,7 +57,7 @@ def _send_email_dispatch_sync(to_email: str, subject: str, text_content: str) ->
             msg2["Subject"] = subject
             msg2.attach(MIMEText(text_content, "plain"))
 
-            with smtplib.SMTP(smtp2_host, smtp2_port) as server:
+            with smtplib.SMTP(smtp2_host, smtp2_port, timeout=15) as server:
                 server.starttls()
                 server.login(smtp2_user, smtp2_pass)
                 server.send_message(msg2)
@@ -80,7 +81,7 @@ def _send_email_dispatch_sync(to_email: str, subject: str, text_content: str) ->
             "text": text_content
         }
         try:
-            response = requests.post("https://api.resend.com/emails", json=payload, headers=headers)
+            response = requests.post("https://api.resend.com/emails", json=payload, headers=headers, timeout=15)
             if response.status_code in [200, 201]:
                 print(f"[RESEND EMAIL SENT] Real email sent via Resend API to: {to_email}", flush=True)
                 return {"success": True, "provider": "resend", "mock": False}
@@ -92,16 +93,27 @@ def _send_email_dispatch_sync(to_email: str, subject: str, text_content: str) ->
             print(f"[RESEND ERROR]: {str(e)}", flush=True)
             return {"success": False, "error": str(e), "mock": False}
 
-    # 3. Fallback: Mock Mode
-    print(f"\n--- [MOCK EMAIL DISPATCH] ---")
-    print(f"   To: {to_email}")
-    print(f"   Subject: {subject}")
-    print(f"   Content:\n   {text_content.replace(chr(10), chr(10) + '   ')}\n", flush=True)
+    # Do not treat a logged/mock email as a delivered email.
+    print(
+        f"[EMAIL ERROR] No configured email provider could send a message to {to_email}.",
+        flush=True,
+    )
     return {
-        "success": True,
+        "success": False,
         "mock": True,
-        "message": "Mock email logged to server console (No API/SMTP key configured)."
+        "error": "No configured email provider could send the message."
     }
+
+
+async def send_email_dispatch_and_wait(to_email: str, subject: str, text_content: str) -> dict:
+    """Send an email without blocking the event loop and return its delivery result."""
+    load_dotenv(override=True)
+    return await asyncio.to_thread(
+        _send_email_dispatch_sync,
+        to_email,
+        subject,
+        text_content,
+    )
 
 
 def send_email_dispatch(to_email: str, subject: str, text_content: str) -> dict:
@@ -131,5 +143,3 @@ def send_email_dispatch(to_email: str, subject: str, text_content: str) -> dict:
         "mock": not has_real_creds,
         "message": "Email dispatch initiated asynchronously in background thread."
     }
-
-

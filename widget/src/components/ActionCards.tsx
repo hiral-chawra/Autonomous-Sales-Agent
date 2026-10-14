@@ -88,6 +88,8 @@ export default function ActionCards({
         sessionId={sessionId}
         leadId={leadId}
         apiBase={apiBase}
+        attendeeEmail={payload.data?.user_email}
+        attendeeName={payload.data?.user_name}
         onSendMessage={onSendMessage}
       />
     );
@@ -99,6 +101,8 @@ export default function ActionCards({
         sessionId={sessionId}
         leadId={leadId}
         apiBase={apiBase}
+        attendeeEmail={payload.data?.user_email}
+        attendeeName={payload.data?.user_name}
         onSendMessage={onSendMessage}
       />
     );
@@ -569,6 +573,7 @@ function MCQCard({
    4. CALL ROUTING CARD ("Talk to AI" vs "Book Human Expert")
 ══════════════════════════════════════════════════════════════════════ */
 function CallRoutingCard({
+  payload,
   sessionId,
   leadId,
   apiBase,
@@ -593,6 +598,8 @@ function CallRoutingCard({
         leadId={leadId}
         apiBase={apiBase}
         tier={selectedTier}
+        attendeeEmail={payload.data?.user_email}
+        attendeeName={payload.data?.user_name}
         slot={selectedSlot}
         onSendMessage={onSendMessage}
       />
@@ -606,6 +613,8 @@ function CallRoutingCard({
         leadId={leadId}
         apiBase={apiBase}
         tier={selectedTier}
+        attendeeEmail={payload.data?.user_email}
+        attendeeName={payload.data?.user_name}
         onSendMessage={onSendMessage}
         onSlotConfirmed={(slot) => {
           setSelectedSlot(slot);
@@ -840,6 +849,8 @@ function CalendarCard({
   leadId,
   apiBase,
   tier = 'enquiry',
+  attendeeEmail,
+  attendeeName,
   onSendMessage,
   onSlotConfirmed,
 }: {
@@ -847,6 +858,8 @@ function CalendarCard({
   leadId: string | null;
   apiBase: string;
   tier?: 'enquiry' | 'project';
+  attendeeEmail?: string;
+  attendeeName?: string;
   onSendMessage?: (text: string) => Promise<void>;
   onSlotConfirmed?: (slot: TimeSlot) => void;
 }) {
@@ -854,6 +867,8 @@ function CalendarCard({
   const [slots, setSlots] = useState<TimeSlot[]>([]);
   const [selectedSlot, setSelectedSlot] = useState<TimeSlot | null>(null);
   const [bookingUrl, setBookingUrl] = useState('');
+  const [bookingEmail, setBookingEmail] = useState('');
+  const [bookingEmailSent, setBookingEmailSent] = useState<boolean | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const [retryCount, setRetryCount] = useState(0);
   const [errorMsg, setErrorMsg] = useState('');
@@ -896,6 +911,8 @@ function CalendarCard({
         slot_end: selectedSlot.end,
         lead_id: leadId ?? 'anonymous',
         session_id: sessionId,
+        user_email: attendeeEmail,
+        user_name: attendeeName,
       };
       const res = await fetch(`${apiBase}/api/v1/scheduling/book`, {
         method: 'POST',
@@ -907,6 +924,8 @@ function CalendarCard({
         throw new Error(data.detail || 'Cal.com could not confirm the booking.');
       }
       setBookingUrl(data.meeting_url ?? '#');
+      setBookingEmail(data.email_sent_to || attendeeEmail || '');
+      setBookingEmailSent(data.email_delivery_status === 'sent');
       setState('booked');
     } catch (e: unknown) {
       setErrorMsg(e instanceof Error ? e.message : 'Unknown error');
@@ -939,7 +958,9 @@ function CalendarCard({
         <div style={{ textAlign: 'center', padding: '8px 0' }}>
           <div style={{ fontSize: '32px', marginBottom: '8px' }}>🎉</div>
           <p style={{ fontSize: '12px', color: '#DBD7FA', marginBottom: '10px', lineHeight: '1.5' }}>
-            Your demo is confirmed! Check your email for the calendar invite.
+            {bookingEmailSent
+              ? `Your demo is confirmed! A confirmation was sent to ${bookingEmail || 'your email'}. Check your spam folder if it is missing.`
+              : `Your demo is confirmed, but we could not send a confirmation email to ${bookingEmail || 'your email'}. Check for the Cal.com invite or contact our team.`}
           </p>
           {bookingUrl && bookingUrl !== '#' && (
             <a
@@ -1156,6 +1177,8 @@ function RazorpayCheckoutCard({
   apiBase,
   tier = 'enquiry',
   slot,
+  attendeeEmail,
+  attendeeName,
   onSendMessage,
 }: {
   sessionId: string;
@@ -1163,11 +1186,18 @@ function RazorpayCheckoutCard({
   apiBase: string;
   tier?: 'enquiry' | 'project';
   slot?: TimeSlot;
+  attendeeEmail?: string;
+  attendeeName?: string;
   onSendMessage?: (text: string) => Promise<void>;
 }) {
   const [state, setState] = useState<CheckoutState>('idle');
   const [errorMsg, setErrorMsg] = useState<string>('');
-  const [bookingDetails, setBookingDetails] = useState<{ meetingUrl?: string; timeFmt?: string } | null>(null);
+  const [bookingDetails, setBookingDetails] = useState<{
+    meetingUrl?: string;
+    timeFmt?: string;
+    attendeeEmail?: string;
+    emailSent?: boolean;
+  } | null>(null);
 
   const amount = tier === 'enquiry' ? 100 : 500;
 
@@ -1219,7 +1249,7 @@ function RazorpayCheckoutCard({
         setState('verifying');
 
         // Verify Payment
-        await fetch(`${apiBase}/verify-payment`, {
+        const paymentRes = await fetch(`${apiBase}/verify-payment`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1231,6 +1261,10 @@ function RazorpayCheckoutCard({
             tier: tier,
           }),
         });
+        const paymentData = await paymentRes.json().catch(() => ({}));
+        if (!paymentRes.ok || paymentData.status !== 'success') {
+          throw new Error(paymentData.detail || 'Payment could not be verified.');
+        }
 
         // Call Cal.com / Booking endpoint to finalize meeting & send email calendar invite
         if (slot) {
@@ -1243,15 +1277,20 @@ function RazorpayCheckoutCard({
               lead_id: leadId || 'anonymous',
               session_id: sessionId,
               tier: tier,
+              user_email: attendeeEmail,
+              user_name: attendeeName,
             }),
           });
-          if (bookRes.ok) {
-            const bData = await bookRes.json();
-            setBookingDetails({
-              meetingUrl: bData.meeting_url,
-              timeFmt: bData.scheduled_time,
-            });
+          const bookingData = await bookRes.json().catch(() => ({}));
+          if (!bookRes.ok || bookingData.status !== 'confirmed') {
+            throw new Error(bookingData.detail || 'Cal.com could not confirm the booking.');
           }
+          setBookingDetails({
+            meetingUrl: bookingData.meeting_url,
+            timeFmt: bookingData.scheduled_time,
+            attendeeEmail: bookingData.email_sent_to || attendeeEmail,
+            emailSent: bookingData.email_delivery_status === 'sent',
+          });
         }
 
         setState('success');
@@ -1317,7 +1356,11 @@ function RazorpayCheckoutCard({
           <p style={{ fontSize: '12px', color: '#DBD7FA', margin: '0 0 10px 0', lineHeight: '1.5' }}>
             📅 <strong>{bookingDetails?.timeFmt || slotTimeStr}</strong>
             <br />
-            An email with your Google Meet calendar invite (`.ics`) has been dispatched to your inbox.
+            {bookingDetails
+              ? bookingDetails.emailSent
+                ? `A confirmation was sent to ${bookingDetails.attendeeEmail || 'your email'}. Check your spam folder if it is missing.`
+                : `We could not send a confirmation email to ${bookingDetails.attendeeEmail || 'your email'}. Check for the Cal.com invite or contact our team.`
+              : 'Your payment is confirmed.'}
           </p>
           {bookingDetails?.meetingUrl && (
             <a

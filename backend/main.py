@@ -28,7 +28,7 @@ from db import (
     init_db, link_lead_photo, enqueue_follow_up,
     get_due_follow_ups, mark_follow_up_processed
 )
-from dispatch import send_email_dispatch
+from dispatch import send_email_dispatch, send_email_dispatch_and_wait
 from langchain_core.messages import HumanMessage
 
 UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "uploads")
@@ -713,6 +713,7 @@ class BookingRequest(BaseModel):
     session_id: str
     tier: str | None = "enquiry"
     user_email: str | None = None
+    user_name: str | None = None
 
 @app.post("/api/v1/scheduling/book")
 async def book_slot(payload: BookingRequest):
@@ -725,10 +726,10 @@ async def book_slot(payload: BookingRequest):
         if not payload.user_email:
             raise HTTPException(status_code=503, detail="Could not retrieve the attendee email address.") from exc
 
-    user_email = payload.user_email or lead.get("email")
+    user_email = (payload.user_email or lead.get("email") or "").strip()
     if not user_email:
         raise HTTPException(status_code=400, detail="An attendee email address is required to book this meeting.")
-    user_name = lead.get("full_name") or "Valued Client"
+    user_name = (payload.user_name or lead.get("full_name") or "Valued Client").strip()
 
     try:
         dt_start = datetime.datetime.fromisoformat(payload.slot_start.replace("Z", "+00:00"))
@@ -783,13 +784,22 @@ async def book_slot(payload: BookingRequest):
         f"Meeting Link: {meeting_url or 'See the Cal.com calendar invitation'}\n\n"
         "We look forward to speaking with you!"
     )
-    send_email_dispatch(user_email, "Booking Confirmed: Call Scheduled with Aanandi TechnoSoft", client_body)
-
-    team_email = (
-        os.getenv("TECH_TEAM_EMAIL", "asmiupadhyay491@gmail.com")
-        if payload.tier == "project"
-        else os.getenv("RECEPTIONIST_EMAIL", "pyashkumar0312@gmail.com")
+    email_result = await send_email_dispatch_and_wait(
+        user_email,
+        "Booking Confirmed: Call Scheduled with Aanandi TechnoSoft",
+        client_body,
     )
+    email_delivery_status = (
+        "sent" if email_result.get("success") and not email_result.get("mock") else "not_sent"
+    )
+    if email_delivery_status == "not_sent":
+        print(
+            f"[BOOKING EMAIL ERROR] Confirmation email was not delivered to {user_email}: "
+            f"{email_result.get('error', 'No email provider accepted the message.')}",
+            flush=True,
+        )
+
+    team_email = os.getenv("BOOKING_NOTIFICATION_EMAIL", "pyashff0312@gmail.com")
     team_body = (
         "New Booking Confirmed!\n\n"
         f"Lead Name: {user_name}\n"
@@ -807,6 +817,7 @@ async def book_slot(payload: BookingRequest):
         "booking_id": booking_data["id"],
         "meeting_url": meeting_url,
         "email_sent_to": user_email,
+        "email_delivery_status": email_delivery_status,
         "scheduled_time": start_fmt,
     }
 
