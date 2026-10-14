@@ -16,7 +16,6 @@ from pipecat.services.whisper.stt import WhisperSTTService
 from pipecat.services.tts_service import TTSService
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.processors.aggregators.llm_context import LLMContext
-
 from pipecat.serializers.base_serializer import FrameSerializer
 from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame, TTSStartedFrame, TTSStoppedFrame, TTSAudioRawFrame
 
@@ -98,7 +97,6 @@ class EdgeTTSService(TTSService):
             yield TTSStoppedFrame()
 
 
-
 # Pre-initialize STT model
 stt = WhisperSTTService(settings=WhisperSTTService.Settings(model="tiny"))
 
@@ -106,7 +104,7 @@ async def run_voice_agent(transport, chat_history: list = None):
     openrouter_key = os.getenv("OPENROUTER_API_KEY", "")
     gemini_key = os.getenv("GEMINI_API_KEY", "")
 
-    #  Initialize LLM with automatic working key selection
+    # Initialize LLM with automatic working key selection
     if gemini_key and gemini_key.startswith("AIzaSy"):
         from pipecat.services.google.llm import GoogleLLMService, GoogleLLMSettings
         llm = GoogleLLMService(
@@ -141,7 +139,10 @@ async def run_voice_agent(transport, chat_history: list = None):
             "DO NOT ask to book a calendar slot, as they are already speaking with you directly. "
             "Review the chat history, greet them by name if known, and ask follow-up questions "
             "about their project requirements or enterprise needs. Keep answers conversational and brief (1-2 sentences). "
-            "IMPORTANT: Do not use any markdown formatting (no asterisks, no bolding, no bullet points) as your text will be read aloud." 
+            "IMPORTANT SCRIPTING: "
+            "1. Do not use any markdown formatting (no asterisks, no bolding, no bullet points). "
+            "2. During the conversation, you must explicitly ask the user what they want to build. "
+            "3. When the user is ready to conclude the call, instruct them that they can now connect with the human technical assistance team."
         )
     }]
 
