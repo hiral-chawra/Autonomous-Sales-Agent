@@ -1,6 +1,4 @@
 import io
-import av
-import edge_tts
 import os
 import requests
 from dotenv import load_dotenv
@@ -14,11 +12,11 @@ from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.services.whisper.stt import WhisperSTTService
-from pipecat.services.tts_service import TTSService
+from pipecat.services.kokoro.tts import KokoroTTSService
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.serializers.base_serializer import FrameSerializer
-from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame, TTSStartedFrame, TTSStoppedFrame, TTSAudioRawFrame
+from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame
 
 load_dotenv()
 
@@ -43,61 +41,6 @@ class RawPCMFrameSerializer(FrameSerializer):
         return None
 
 
-class EdgeTTSService(TTSService):
-    """High-quality streaming Neural TTS service using EdgeTTS and PyAV for 16kHz PCM audio."""
-    def __init__(self, voice: str = "en-IN-NeerjaNeural", sample_rate: int = 16000, **kwargs):
-        super().__init__(sample_rate=sample_rate, **kwargs)
-        self._voice = voice
-
-    async def run_tts(self, text: str, *args, **kwargs):
-        try:
-            yield TTSStartedFrame()
-            communicate = edge_tts.Communicate(text, self._voice)
-            mp3_bytes = b""
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    mp3_bytes += chunk["data"]
-
-            if not mp3_bytes:
-                yield TTSStoppedFrame()
-                return
-
-            container = av.open(io.BytesIO(mp3_bytes))
-            resampler = av.AudioResampler(format="s16", layout="mono", rate=self.sample_rate)
-
-            # 16,000 bytes = 500ms chunks for smooth browser buffer playback
-            chunk_size = 16000
-            buffer = bytearray()
-
-            for frame in container.decode(audio=0):
-                resampled_frames = resampler.resample(frame)
-                for rf in resampled_frames:
-                    buffer.extend(bytes(rf.planes[0]))
-                    while len(buffer) >= chunk_size:
-                        raw_chunk = bytes(buffer[:chunk_size])
-                        del buffer[:chunk_size]
-                        yield TTSAudioRawFrame(
-                            audio=raw_chunk,
-                            sample_rate=self.sample_rate,
-                            num_channels=1
-                        )
-
-            # Flush any remaining frames from the resampler
-            for rf in resampler.resample(None):
-                buffer.extend(bytes(rf.planes[0]))
-
-            if len(buffer) > 0:
-                yield TTSAudioRawFrame(
-                    audio=bytes(buffer),
-                    sample_rate=self.sample_rate,
-                    num_channels=1
-                )
-            yield TTSStoppedFrame()
-        except Exception as e:
-            print(f"[EdgeTTS] Error rendering voice: {e}")
-            yield TTSStoppedFrame()
-
-
 # Pre-initialize STT model
 stt = WhisperSTTService(settings=WhisperSTTService.Settings(model="tiny"))
 
@@ -120,8 +63,11 @@ async def run_voice_agent(transport, chat_history: list = None):
             settings=OpenAILLMService.Settings(model="openai/gpt-4o-mini")
         )
 
-    # 2. Resilient Neural Voice Synthesis (EdgeTTS) & VAD Processor
-    tts = EdgeTTSService(voice="en-IN-NeerjaNeural", sample_rate=16000)
+    # 2. Resilient Neural Voice Synthesis (Local Kokoro Engine)
+    tts = KokoroTTSService(
+        voice="af_heart",
+        sample_rate=16000
+    )
     
     # Configure VAD to detect end-of-speech faster (0.4s pause instead of ~1s)
     vad_analyzer = SileroVADAnalyzer(params=VADParams(stop_secs=0.4))
@@ -165,8 +111,8 @@ async def run_voice_agent(transport, chat_history: list = None):
         stt,
         context_aggregator.user(),
         llm,
-        markdown_filter,      # <-- Strips asterisks and markdown symbols
-        sentence_aggregator,  # <-- Waits for a full sentence before sending audio
+        markdown_filter,
+        sentence_aggregator,
         tts,
         transport.output(),
         context_aggregator.assistant()
