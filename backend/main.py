@@ -20,9 +20,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from pipecat.transports.websocket.server import WebsocketServerTransport, WebsocketServerParams
 from bot import run_voice_agent
-from agent import app as sales_agent
+from agent import app as sales_agent, GREETING_WORDS
 from db import (
     leads_collection, conversations_collection,
     init_db, link_lead_photo, enqueue_follow_up,
@@ -475,11 +474,15 @@ async def chat_stream_endpoint(websocket: WebSocket, session_id: str):
 
                 email_val = lead_data.get("email") or current_values.get("user_email") or ""
                 name_val = lead_data.get("full_name") or current_values.get("user_name") or ""
+                if name_val and name_val.strip().lower() in GREETING_WORDS:
+                    name_val = ""
                 phone_val = lead_data.get("phone") or current_values.get("user_phone") or ""
                 verified_raw = lead_data.get("is_verified") if lead_data.get("is_verified") is not None else current_values.get("is_verified", False)
                 # Verification is strictly invalid without a verified attendee email
                 is_verified = bool(verified_raw) and bool(email_val)
                 step_val = lead_data.get("pending_step") or current_values.get("pending_step") or "COLLECT_NAME"
+                if not name_val and step_val in ["COLLECT_EMAIL", "COLLECT_PHONE"]:
+                    step_val = "COLLECT_NAME"
                 if not email_val and step_val == "VERIFIED":
                     step_val = "COLLECT_EMAIL" if name_val else "COLLECT_NAME"
 
@@ -506,7 +509,10 @@ async def chat_stream_endpoint(websocket: WebSocket, session_id: str):
                 # Update MongoDB Lead Document with conversational progress
                 try:
                     update_fields = {}
-                    if result.get("user_name"): update_fields["full_name"] = result["user_name"]
+                    if result.get("user_name") and result["user_name"].strip().lower() not in GREETING_WORDS:
+                        update_fields["full_name"] = result["user_name"]
+                    elif result.get("user_name") == "":
+                        update_fields["full_name"] = ""
                     if result.get("user_email"): update_fields["email"] = result["user_email"]
                     if result.get("user_phone"): update_fields["phone"] = result["user_phone"]
                     if result.get("is_verified") is not None:

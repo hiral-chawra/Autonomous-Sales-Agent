@@ -118,6 +118,19 @@ def send_email(to_email: str, subject: str, body: str) -> str:
 tools = [query_knowledge_base, generate_booking_link, send_email]
 
 # ── Intent Helpers ─────────────────────────────────────────────────────────────
+GREETING_WORDS = {
+    "hi", "hello", "hey", "hay", "heyy", "heyyy", "hii", "hiii",
+    "heya", "howdy", "hola", "yo", "sup", "namaste", "start",
+    "greetings", "good morning", "good afternoon", "good evening"
+}
+
+def is_standalone_greeting(text: str) -> bool:
+    """Returns True if the text is solely a greeting or salutation."""
+    if not text or not text.strip():
+        return False
+    clean = re.sub(r'[\s!.,?:;]+', ' ', text.strip().lower()).strip()
+    return clean in GREETING_WORDS
+
 def is_user_query(text: str) -> bool:
     """Determines whether text is a user inquiry/question rather than a name, email, or phone input."""
     if not text or not text.strip():
@@ -126,8 +139,8 @@ def is_user_query(text: str) -> bool:
     text_clean = text.strip()
     text_lower = text_clean.lower()
 
-    # Standalone greetings
-    if text_lower in ["hi", "hello", "hey", "start", "hi!", "hello!", "hey!", "good morning", "good afternoon"]:
+    # Standalone greetings are never user queries
+    if is_standalone_greeting(text_clean):
         return False
 
     # Email inputs are NEVER user queries
@@ -168,10 +181,16 @@ def extract_name(text: str) -> str | None:
     text_clean = text.strip()
     text_lower = text_clean.lower()
 
+    # Standalone greetings are NEVER names
+    if is_standalone_greeting(text_clean):
+        return None
+
     # Ignore general conversational responses / help queries
     non_names = {
-        "hi", "hello", "hey", "start", "thanks", "thank you", "yes", "no", "sure", "ok", "okay",
-        "demo", "pricing", "projects", "services", "ai", "bot", "voice", "help", "info", "details",
+        "hi", "hello", "hey", "hay", "heyy", "heyyy", "hii", "hiii", "heya",
+        "howdy", "hola", "yo", "sup", "namaste", "start", "thanks", "thank you",
+        "yes", "no", "sure", "ok", "okay", "demo", "pricing", "projects", "services",
+        "ai", "bot", "voice", "help", "info", "details",
         "what can you do", "what i can help you with", "how can you help me", "tell me more"
     }
     if text_lower in non_names:
@@ -186,13 +205,17 @@ def extract_name(text: str) -> str | None:
             has_prefix = True
             break
 
-    # If no prefix, ensure it's not a general question/query
-    if not has_prefix and is_user_query(text_clean):
+    # If no prefix, ensure it's not a general question/query or greeting
+    if not has_prefix and (is_user_query(text_clean) or is_standalone_greeting(text_clean)):
         return None
 
     words = text_clean.split()
     if 1 <= len(words) <= 3 and all(w.replace("-", "").replace(".", "").replace("_", "").isalpha() for w in words):
-        common_words = {"the", "a", "an", "what", "how", "why", "where", "when", "can", "could", "would", "should", "will", "is", "are", "help", "need", "want", "just", "looking", "nothing", "anything", "something"}
+        common_words = {
+            "the", "a", "an", "what", "how", "why", "where", "when", "can", "could", "would",
+            "should", "will", "is", "are", "help", "need", "want", "just", "looking", "nothing",
+            "anything", "something", "hay", "hey", "hi", "hello", "yo", "sup", "hola", "namaste"
+        }
         if not has_prefix and any(w.lower() in common_words for w in words):
             return None
         return text_clean.title()
@@ -207,6 +230,10 @@ def parse_lead_info(text: str) -> dict:
     """
     info = {}
     if not text or not text.strip():
+        return info
+
+    # If the entire message is just a greeting, never parse contact info
+    if is_standalone_greeting(text):
         return info
 
     clean_text = text.strip()
@@ -230,11 +257,11 @@ def parse_lead_info(text: str) -> dict:
     if name_label_match:
         raw_name = name_label_match.group(1).strip()
         cleaned_name = extract_name(raw_name) or raw_name.title()
-        if cleaned_name and len(cleaned_name) < 40:
+        if cleaned_name and len(cleaned_name) < 40 and not is_standalone_greeting(cleaned_name):
             info["name"] = cleaned_name
     elif intro_match:
         cand_name = intro_match.group(1).strip().title()
-        if len(cand_name.split()) <= 2 and not is_user_query(cand_name):
+        if len(cand_name.split()) <= 2 and not is_user_query(cand_name) and not is_standalone_greeting(cand_name):
             info["name"] = cand_name
     else:
         text_without_contact = clean_text
@@ -242,13 +269,18 @@ def parse_lead_info(text: str) -> dict:
             text_without_contact = text_without_contact.replace(email_match.group(0), "")
         if "phone" in info and phone_match:
             text_without_contact = text_without_contact.replace(phone_match.group(0), "")
-        # Remove common filler words and symbols
-        text_without_contact = re.sub(r'\b(hey|hello|hi|and|my|details|is|phone|email)\b', ' ', text_without_contact, flags=re.IGNORECASE)
+        # Remove common filler words, greetings, and symbols
+        text_without_contact = re.sub(
+            r'\b(hey|hello|hi|hay|heyy|heyyy|hii|hiii|heya|hola|howdy|yo|sup|namaste|and|my|details|is|phone|email)\b',
+            ' ',
+            text_without_contact,
+            flags=re.IGNORECASE
+        )
         text_without_contact = re.sub(r'[,|;:+\-]', ' ', text_without_contact).strip()
 
-        if text_without_contact:
+        if text_without_contact and not is_standalone_greeting(text_without_contact):
             extracted = extract_name(text_without_contact)
-            if extracted:
+            if extracted and not is_standalone_greeting(extracted):
                 info["name"] = extracted
 
     return info
@@ -444,6 +476,8 @@ def reasoning_node(state: AgentState):
     last_msg = messages[-1].content.strip() if messages else ""
     
     user_name = state.get("user_name", "")
+    if user_name and user_name.strip().lower() in GREETING_WORDS:
+        user_name = ""
     user_email = state.get("user_email", "")
     user_phone = state.get("user_phone", "")
     otp_code = state.get("otp_code", "")
@@ -453,6 +487,8 @@ def reasoning_node(state: AgentState):
 
     # Integrity guard: A lead is ONLY verified if a valid email is recorded!
     is_verified = state.get("is_verified", False) and bool(user_email)
+    if not user_name and pending_step in ["COLLECT_EMAIL", "COLLECT_PHONE"]:
+        pending_step = "COLLECT_NAME"
     if not user_email and pending_step == "VERIFIED":
         pending_step = "COLLECT_EMAIL" if user_name else "COLLECT_NAME"
 
@@ -612,7 +648,81 @@ def reasoning_node(state: AgentState):
                     }
                 }
 
-    # ── 2. Parse & Ingest Lead Contact Details (Name, Email, Phone) ────────────
+    # ── 2. Check for Standalone Greetings (e.g. "hi", "hay", "hello", "heyy") ───
+    if is_standalone_greeting(last_msg):
+        if is_verified:
+            return {
+                "messages": [AIMessage(content=f"👋 Welcome back, **{user_name or 'there'}**! How can I help you today? Ask me any question or pick a topic below.")],
+                "lead_stage": lead_stage,
+                "pending_step": "VERIFIED",
+                "is_verified": True,
+                "user_name": user_name,
+                "user_email": user_email,
+                "user_phone": user_phone,
+                "photo_context": photo_ctx,
+                "tool_payload": {
+                    "type": "mcq",
+                    "data": {
+                        "title": "Quick Questions",
+                        "options": [
+                            "Tell me about your 9 live portfolio apps (Uclean, Jotno, etc.)",
+                            "Tell me about Custom CRM Integrations",
+                            "How do AI Voice & Support Agents work?",
+                            "Book a Discovery Call with Senior Technical Team"
+                        ]
+                    }
+                }
+            }
+        else:
+            if user_name and user_name.strip().lower() not in GREETING_WORDS:
+                if not user_email:
+                    prompt_text = f"👋 Hello again, **{user_name}**! What is your email address so we can secure your session and send you detailed project briefs?"
+                    next_step = "COLLECT_EMAIL"
+                    payload = {"type": "lead_form", "data": {"title": "Submit Email Address", "fields": ["email"]}}
+                elif not user_phone:
+                    prompt_text = f"👋 Hello again, **{user_name}**! What is your contact phone number to finalize your session verification?"
+                    next_step = "COLLECT_PHONE"
+                    payload = {"type": "lead_form", "data": {"title": "Provide Contact Phone", "fields": ["phone"]}}
+                else:
+                    prompt_text = f"👋 Welcome back, **{user_name}**! How can I assist you with custom AI agents or workflow automation today?"
+                    next_step = pending_step
+                    payload = {"type": "mcq", "data": {"title": "Quick Questions", "options": [
+                        "Tell me about your 9 live portfolio apps (Uclean, Jotno, etc.)",
+                        "Tell me about Custom CRM Integrations",
+                        "How do AI Voice & Support Agents work?",
+                        "Book a Discovery Call with Senior Technical Team"
+                    ]}}
+                return {
+                    "messages": [AIMessage(content=prompt_text)],
+                    "lead_stage": lead_stage,
+                    "pending_step": next_step,
+                    "is_verified": False,
+                    "user_name": user_name,
+                    "user_email": user_email,
+                    "user_phone": user_phone,
+                    "photo_context": photo_ctx,
+                    "tool_payload": payload
+                }
+            else:
+                return {
+                    "messages": [AIMessage(content="👋 Welcome to Aanandi TechnoSoft! I'm Aanandi, your AI Sales Engineer.\n\nMay I please have your full name to start our conversation?")],
+                    "lead_stage": lead_stage,
+                    "pending_step": "COLLECT_NAME",
+                    "is_verified": False,
+                    "user_name": "",
+                    "user_email": user_email,
+                    "user_phone": user_phone,
+                    "photo_context": photo_ctx,
+                    "tool_payload": {
+                        "type": "lead_form",
+                        "data": {
+                            "title": "Provide Your Name",
+                            "fields": ["name"]
+                        }
+                    }
+                }
+
+    # ── 3. Parse & Ingest Lead Contact Details (Name, Email, Phone) ────────────
     parsed_info = parse_lead_info(last_msg)
     details_updated = False
 
@@ -705,7 +815,7 @@ def reasoning_node(state: AgentState):
                 }
             }
 
-    # ── 3. Check for Call / Booking Request (Gated by Email Verification) ───────
+    # ── 4. Check for Call / Booking Request (Gated by Email Verification) ───────
     if any(k in last_msg.lower() for k in ["book", "call", "talk", "demo", "pricing", "tier", "schedule"]):
         # If user is already verified with a verified email:
         if is_verified and user_email:
@@ -751,50 +861,6 @@ def reasoning_node(state: AgentState):
                     "data": {
                         "title": "Contact Details for Meeting Invite",
                         "fields": missing_fields
-                    }
-                }
-            }
-
-    # ── 4. Standalone Greetings ────────────────────────────────────────────────
-    if last_msg.lower().strip() in ["hi", "hello", "hey", "start", "hi!", "hello!"]:
-        if is_verified:
-            return {
-                "messages": [AIMessage(content=f"👋 Welcome back, **{user_name or 'there'}**! How can I help you today? Ask me any question or pick a topic below.")],
-                "lead_stage": lead_stage,
-                "pending_step": "VERIFIED",
-                "is_verified": True,
-                "user_name": user_name,
-                "user_email": user_email,
-                "user_phone": user_phone,
-                "photo_context": photo_ctx,
-                "tool_payload": {
-                    "type": "mcq",
-                    "data": {
-                        "title": "Quick Questions",
-                        "options": [
-                            "Tell me about your 9 live portfolio apps (Uclean, Jotno, etc.)",
-                            "Tell me about Custom CRM Integrations",
-                            "How do AI Voice & Support Agents work?",
-                            "Book a Discovery Call with Senior Technical Team"
-                        ]
-                    }
-                }
-            }
-        else:
-            return {
-                "messages": [AIMessage(content="👋 Welcome to Aanandi TechnoSoft! I'm Aanandi, your AI Sales Engineer.\n\nMay I please have your full name to start our conversation?")],
-                "lead_stage": lead_stage,
-                "pending_step": "COLLECT_NAME" if not user_name else pending_step,
-                "is_verified": False,
-                "user_name": user_name,
-                "user_email": user_email,
-                "user_phone": user_phone,
-                "photo_context": photo_ctx,
-                "tool_payload": {
-                    "type": "lead_form",
-                    "data": {
-                        "title": "Quick Session Verification",
-                        "fields": ["name"]
                     }
                 }
             }
