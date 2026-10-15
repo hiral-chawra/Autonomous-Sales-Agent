@@ -69,6 +69,10 @@ async def run_voice_agent(transport, chat_history: list = None):
         sample_rate=16000
     )
     
+    # Attach the Markdown text filter directly to the TTS engine
+    markdown_filter = MarkdownTextFilter()
+    tts.add_text_filter(markdown_filter)
+
     # Configure VAD to detect end-of-speech faster (0.4s pause instead of ~1s)
     vad_analyzer = SileroVADAnalyzer(params=VADParams(stop_secs=0.4))
     vad_processor = VADProcessor(vad_analyzer=vad_analyzer)
@@ -100,18 +104,16 @@ async def run_voice_agent(transport, chat_history: list = None):
     context = LLMContext(messages=base_messages)
     context_aggregator = LLMContextAggregatorPair(context)
 
-    # Initialize the new text filters here
-    markdown_filter = MarkdownTextFilter()
+    # Initialize the sentence aggregator
     sentence_aggregator = SentenceAggregator()
 
-    # Add them into the Pipeline list right between 'llm' and 'tts'
+    # Add components into the Pipeline list (Markdown filter is removed from here)
     pipeline = Pipeline([
         transport.input(),
         vad_processor,
         stt,
         context_aggregator.user(),
         llm,
-        markdown_filter,
         sentence_aggregator,
         tts,
         transport.output(),
